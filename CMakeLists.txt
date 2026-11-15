@@ -13,24 +13,33 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Ensure CRT matches CommonLibSSE-NG (/MD dynamic CRT with static library linkage)
 set(VCPKG_TARGET_TRIPLET "x64-windows-static-md" CACHE STRING "vcpkg triplet matching /MD CRT")
 
-# Enable MSVC multi-processor parallel compilation (/MP)
+# Enable MSVC multi-processor parallel compilation (/MP) and UTF-8 source/exec charset
 if(MSVC)
-    add_compile_options(/MP)
+    add_compile_options(/MP /utf-8)
 endif()
+
+# 여기에 추가 (라인 20 부근)
+add_compile_definitions(
+    WIN32_LEAN_AND_MEAN
+    NOMINMAX
+)
 
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(ixwebsocket CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
 
-# Disable CommonLibSSE-NG internal tests (prevents dependency on Catch2)
+# CommonLibSSE-NG build options (SE/AE enabled, tests and VR disabled)
 set(BUILD_TESTS OFF CACHE BOOL "Disable CommonLibSSE unit tests" FORCE)
+set(ENABLE_SKYRIM_SE ON CACHE BOOL "Enable Skyrim SE support" FORCE)
+set(ENABLE_SKYRIM_AE ON CACHE BOOL "Enable Skyrim AE (1.6+ / 1.7+) support" FORCE)
+set(ENABLE_SKYRIM_VR OFF CACHE BOOL "Disable Skyrim VR support" FORCE)
 
-# CommonLibSSE-NG (Automatic download & build)
+# CommonLibSSE-NG (Maintained upstream supporting 1.7.104 & Address Library Format 5)
 include(FetchContent)
 FetchContent_Declare(
     CommonLibSSE-NG
-    GIT_REPOSITORY https://github.com/CharmedBaryon/CommonLibSSE-NG.git
-    GIT_TAG        main
+    GIT_REPOSITORY https://github.com/alandtse/CommonLibSSE-NG.git
+    GIT_TAG        ng
 )
 FetchContent_MakeAvailable(CommonLibSSE-NG)
 

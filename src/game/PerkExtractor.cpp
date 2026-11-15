@@ -9,7 +9,7 @@ namespace SkyPotion::Game {
         if (!player) return perksArray;
 
         const std::vector<std::pair<RE::FormID, const char*>> trackedPerks = {
-            { 0x000BE956, "Alchemist 1" },
+            { 0x000BE127, "Alchemist 1" },
             { 0x000C07CA, "Alchemist 2" },
             { 0x000C07CB, "Alchemist 3" },
             { 0x000C07CC, "Alchemist 4" },
@@ -21,8 +21,8 @@ namespace SkyPotion::Game {
             { 0x00058218, "Experimenter 1" },
             { 0x00105F2A, "Experimenter 2" },
             { 0x00105F2B, "Experimenter 3" },
-            { 0x00105F2C, "Green Thumb" },
-            { 0x00105F2E, "Snakeblood" }
+            { 0x00105F2E, "Green Thumb" },
+            { 0x00105F2C, "Snakeblood" }
         };
 
         for (const auto& [formId, fallbackName] : trackedPerks) {
@@ -65,7 +65,7 @@ namespace SkyPotion::Game {
         else if (hasPerk(0x000C07CC)) summary["alchemist"] = 4;
         else if (hasPerk(0x000C07CB)) summary["alchemist"] = 3;
         else if (hasPerk(0x000C07CA)) summary["alchemist"] = 2;
-        else if (hasPerk(0x000BE956)) summary["alchemist"] = 1;
+        else if (hasPerk(0x000BE127)) summary["alchemist"] = 1;
 
         // Core alchemy perks
         summary["physician"] = hasPerk(0x00058215);
@@ -79,8 +79,8 @@ namespace SkyPotion::Game {
         else if (hasPerk(0x00058218)) summary["experimenter"] = 1;
 
         // Green Thumb & Snakeblood
-        summary["greenThumb"] = hasPerk(0x00105F2C);
-        summary["snakeblood"] = hasPerk(0x00105F2E);
+        summary["greenThumb"] = hasPerk(0x00105F2E);
+        summary["snakeblood"] = hasPerk(0x00105F2C);
 
         return summary;
     }

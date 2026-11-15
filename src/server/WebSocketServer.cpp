@@ -26,6 +26,10 @@ namespace SkyPotion::Server {
         try {
             _server = std::make_unique<ix::WebSocketServer>(_port, _host);
 
+            // Disable per-message deflate compression to prevent handshake failure with Android OkHttp
+            // ("unexpected Sec-WebSocket-Extensions in response header")
+            _server->disablePerMessageDeflate();
+
             _server->setOnClientMessageCallback(
                 [this](std::shared_ptr<ix::ConnectionState> connectionState,
                        ix::WebSocket& webSocket,
