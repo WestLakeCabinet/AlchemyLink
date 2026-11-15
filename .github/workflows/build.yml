@@ -1,0 +1,39 @@
+name: Build SkyPotionSKSE Plugin
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup MSVC C++ Environment
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Configure CMake and Install Dependencies (vcpkg manifest mode)
+        run: |
+          cmake -B build -S . `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DBUILD_TESTS=OFF `
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" `
+            -DVCPKG_TARGET_TRIPLET=x64-windows-static-md
+
+      - name: Build Plugin DLL
+        run: |
+          cmake --build build --config Release
+
+      - name: Upload SkyPotionSKSE.dll Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SkyPotionSKSE-Release
+          path: build/Release/SkyPotionSKSE.dll

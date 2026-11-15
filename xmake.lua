@@ -1,0 +1,18 @@
+add_rules("mode.debug", "mode.release")
+
+set_languages("cxx23")
+
+add_requires("commonlibsse-ng", "nlohmann_json", "ixwebsocket")
+
+target("SkyPotionSKSE")
+    set_kind("shared")
+    add_rules("commonlibsse-ng.plugin", {
+        name = "SkyPotionSKSE",
+        author = "Dolzzo",
+        description = "Skyrim SE/AE WebSocket Plugin for SkyPotion"
+    })
+    add_files("src/**.cpp")
+    add_headerfiles("src/**.h")
+    add_includedirs("src")
+    add_packages("commonlibsse-ng", "nlohmann_json", "ixwebsocket")
+    add_syslinks("ws2_32", "crypt32")
