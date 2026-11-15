@@ -35,6 +35,18 @@ Write-Host "`n[1/2] Configuring CMake..." -ForegroundColor Yellow
     -DCMAKE_TOOLCHAIN_FILE="$vcpkgToolchain" `
     -DVCPKG_TARGET_TRIPLET="x64-windows-static-md"
 
+# Ensure CommonLibSSE-NG supports Skyrim 1.7.x (Cast / AE)
+$moduleHeader = Join-Path $projectRoot "build\_deps\commonlibsse-ng-src\include\REL\Module.h"
+if (Test-Path $moduleHeader) {
+    $hdrText = [System.IO.File]::ReadAllText($moduleHeader)
+    if ($hdrText -notmatch "case 7:") {
+        Write-Host "Patching CommonLibSSE-NG Module.h for Skyrim 1.7.x support..." -ForegroundColor Cyan
+        $hdrText = $hdrText -replace 'case 6:\s*(\r?\n\s*)_instance\._runtime = Runtime::AE;\s*(\r?\n\s*)break;\s*(\r?\n\s*)default:\s*(\r?\n\s*)_instance\._runtime = Runtime::SE;', 'case 6:$1case 7:$1    _instance._runtime = Runtime::AE;$1    break;$1default:$1    _instance._runtime = a_version[1] >= 6 ? Runtime::AE : Runtime::SE;'
+        $hdrText = $hdrText -replace 'case 6:\s*(\r?\n\s*)_runtime = Runtime::AE;\s*(\r?\n\s*)break;\s*(\r?\n\s*)default:\s*(\r?\n\s*)_runtime = Runtime::SE;', 'case 6:$1case 7:$1    _runtime = Runtime::AE;$1    break;$1default:$1    _runtime = _version[1] >= 6 ? Runtime::AE : Runtime::SE;'
+        [System.IO.File]::WriteAllText($moduleHeader, $hdrText)
+    }
+}
+
 Write-Host "`n[2/2] Building SkyPotionSKSE.dll (Release) with parallel CPU threads..." -ForegroundColor Yellow
 & $cmakeExe --build build --config Release --parallel
 
