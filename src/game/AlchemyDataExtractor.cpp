@@ -51,7 +51,7 @@ namespace SkyPotion::Game {
 
                     slotsArray.push_back({
                         { "formId", std::format("0x{:08X}", mgef->GetFormID()) },
-                        { "magnitude", Util::Round2(eff->GetMagnitude()) },
+                        { "magnitude", Util::Round3(eff->GetMagnitude()) },
                         { "duration", static_cast<int32_t>(eff->GetDuration()) }
                     });
                 } else {
@@ -71,12 +71,9 @@ namespace SkyPotion::Game {
                 { "formId", std::format("0x{:08X}", ing->GetFormID()) },
                 { "name", name },
                 { "value", ing->GetGoldValue() },
-                { "weight", Util::Round2(ing->GetWeight()) },
-                { "ingredientValue", ing->data.costOverride },
+                { "weight", Util::Round3(ing->GetWeight()) },
                 { "effectValue", ing->data.costOverride },
-                { "defaultStock", 1 },
                 { "fileName", fileName },
-                { "origin", fileName },
                 { "slots", slotsArray }
             });
         }
@@ -97,8 +94,8 @@ namespace SkyPotion::Game {
             bool affectMag = mgef->data.flags.any(RE::EffectSetting::EffectSettingData::Flag::kPowerAffectsMagnitude);
             bool affectDur = mgef->data.flags.any(RE::EffectSetting::EffectSettingData::Flag::kPowerAffectsDuration);
             bool isHostile = mgef->data.flags.any(RE::EffectSetting::EffectSettingData::Flag::kHostile);
-            bool isDetrimental = mgef->data.flags.any(RE::EffectSetting::EffectSettingData::Flag::kDetrimental);
-            bool isPoison = isHostile || isDetrimental;
+            //bool isDetrimental = mgef->data.flags.any(RE::EffectSetting::EffectSettingData::Flag::kDetrimental);
+            bool isPoison = isHostile;// || isDetrimental;
 
             // Extract Keywords (KWDA)
             std::string keywordsStr;
@@ -128,16 +125,10 @@ namespace SkyPotion::Game {
             if (keywordsStr.find("Beneficial") != std::string::npos || keywordsStr.find("beneficial") != std::string::npos) {
                 isBeneficial = true;
             }
-            if (keywordsStr.find("Harmful") != std::string::npos || keywordsStr.find("harmful") != std::string::npos || isPoison) {
+            if (keywordsStr.find("Harmful") != std::string::npos || keywordsStr.find("harmful") != std::string::npos) {
                 isHarmful = true;
             }
-            if (!isBeneficial && !isHarmful) {
-                if (isPoison) {
-                    isHarmful = true;
-                } else {
-                    isBeneficial = true;
-                }
-            }
+
 
             bool isPhysician = nameStr.find("Restore") != std::string::npos || nameStr.find("restore") != std::string::npos;
             const char* desc = mgef->magicItemDescription.c_str();
@@ -146,20 +137,19 @@ namespace SkyPotion::Game {
                 { "formId", std::format("0x{:08X}", formId) },
                 { "editorId", editorId },
                 { "name", nameStr },
-                { "baseCost", Util::Round2(mgef->data.baseCost) },
+                { "baseCost", Util::Round4(mgef->data.baseCost) },
                 { "noMag", noMag },
                 { "noDur", noDur },
                 { "affectMag", affectMag },
                 { "affectDur", affectDur },
-                { "hostile", isHostile },
+                //{ "hostile", isHostile },
                 { "isHostile", isHostile },
-                { "isDetrimental", isDetrimental },
-                { "isPoison", isPoison },
+                //{ "isDetrimental", isDetrimental },
+                //{ "isPoison", isPoison },
                 { "isBeneficial", isBeneficial },
                 { "isHarmful", isHarmful },
                 { "isPhysician", isPhysician },
                 { "keywords", keywordsStr },
-                { "keywordList", keywordsArr },
                 { "description", desc ? desc : "" }
             });
         }

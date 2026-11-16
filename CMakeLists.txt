@@ -58,6 +58,8 @@ add_library(
     src/game/StatExtractor.cpp
     src/game/AlchemyDataExtractor.h
     src/game/AlchemyDataExtractor.cpp
+    src/game/AlchemyController.h
+    src/game/AlchemyController.cpp
 )
 
 # Enable Precompiled Headers for ultra-fast compilation & type consistency

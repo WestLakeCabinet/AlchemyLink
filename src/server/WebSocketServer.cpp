@@ -3,6 +3,7 @@
 #include "game/PerkExtractor.h"
 #include "game/StatExtractor.h"
 #include "game/AlchemyDataExtractor.h"
+#include "game/AlchemyController.h"
 
 #include <chrono>
 #include <future>
@@ -89,6 +90,8 @@ namespace SkyPotion::Server {
             SKSE::log::info("Client connected: {} (URI: {})", 
                 connectionState ? connectionState->getId() : "unknown", 
                 msg->openInfo.uri);
+
+            BroadcastFullSnapshot();
             return;
         }
 
@@ -155,6 +158,58 @@ namespace SkyPotion::Server {
                     }
                     return;
                 }
+
+                if (type == "command") {
+                    std::string action = root.value("action", "");
+                    nlohmann::json payload = root;
+
+                    auto taskInterface = SKSE::GetTaskInterface();
+                    if (taskInterface) {
+                        auto promise = std::make_shared<std::promise<nlohmann::json>>();
+                        auto future = promise->get_future();
+
+                        taskInterface->AddTask([promise, action, payload]() {
+                            try {
+                                auto response = ProcessCommand(action, payload);
+                                promise->set_value(std::move(response));
+                            } catch (const std::exception& e) {
+                                SKSE::log::error("Error processing command in main thread: {}", e.what());
+                                promise->set_value(nlohmann::json{
+                                    { "type", "command_result" },
+                                    { "action", action },
+                                    { "success", false },
+                                    { "message", std::string("Exception: ") + e.what() }
+                                });
+                            } catch (...) {
+                                promise->set_value(nlohmann::json{
+                                    { "type", "command_result" },
+                                    { "action", action },
+                                    { "success", false },
+                                    { "message", "Unknown exception in main thread" }
+                                });
+                            }
+                        });
+
+                        // Wait up to 500ms for main thread completion
+                        if (future.wait_for(std::chrono::milliseconds(500)) == std::future_status::ready) {
+                            nlohmann::json response = future.get();
+                            webSocket.sendText(response.dump());
+                        } else {
+                            SKSE::log::warn("Command '{}' timed out waiting for main thread", action);
+                            nlohmann::json timeoutResp = {
+                                { "type", "command_result" },
+                                { "action", action },
+                                { "success", false },
+                                { "message", "Timeout waiting for main thread" }
+                            };
+                            webSocket.sendText(timeoutResp.dump());
+                        }
+                    } else {
+                        auto response = ProcessCommand(action, payload);
+                        webSocket.sendText(response.dump());
+                    }
+                    return;
+                }
             } catch (const std::exception& e) {
                 SKSE::log::warn("Failed to parse incoming WebSocket message: {}", e.what());
                 nlohmann::json err = {
@@ -211,6 +266,10 @@ namespace SkyPotion::Server {
         else if (id == "gamedata.alchemy" || id == "gamedata.all" || id == "alchemy.database") {
             respFields = Game::AlchemyDataExtractor::GetAlchemyGameDataJson();
         }
+        // 8. Alchemy Workbench Status Query
+        else if (id == "alchemy.status" || id == "alchemy.is_open") {
+            respFields["isOpen"] = Game::AlchemyController::IsAlchemyMenuOpen();
+        }
         else {
             respFields["warning"] = "Unrecognized query id";
             respFields["requestedId"] = id;
@@ -222,6 +281,136 @@ namespace SkyPotion::Server {
             { "fields", respFields },
             { "ts", nowMs }
         };
+    }
+
+    nlohmann::json WebSocketServer::ProcessCommand(const std::string& action, const nlohmann::json& payload) {
+        int64_t nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+
+        if (action == "alchemy.select") {
+            std::vector<std::string> ingredients;
+            if (payload.contains("ingredients") && payload["ingredients"].is_array()) {
+                for (const auto& item : payload["ingredients"]) {
+                    if (item.is_string()) {
+                        ingredients.push_back(item.get<std::string>());
+                    } else if (item.is_number_integer()) {
+                        ingredients.push_back(std::format("0x{:08X}", item.get<uint32_t>()));
+                    }
+                }
+            }
+            bool craft = payload.value("craft", false);
+            auto result = Game::AlchemyController::SelectIngredients(ingredients, craft);
+
+            nlohmann::json resp = result.ToJson();
+            resp["type"] = "command_result";
+            resp["action"] = action;
+            resp["ts"] = nowMs;
+            return resp;
+        }
+        else if (action == "alchemy.clear") {
+            bool ok = Game::AlchemyController::ClearSelectedIngredients();
+            return {
+                { "type", "command_result" },
+                { "action", action },
+                { "success", ok },
+                { "message", ok ? "Cleared ingredient selections" : "Failed to clear (alchemy workbench not open?)" },
+                { "ts", nowMs }
+            };
+        }
+        else if (action == "alchemy.status") {
+            bool isOpen = Game::AlchemyController::IsAlchemyMenuOpen();
+            return {
+                { "type", "command_result" },
+                { "action", action },
+                { "success", true },
+                { "isOpen", isOpen },
+                { "ts", nowMs }
+            };
+        }
+
+        return {
+            { "type", "command_result" },
+            { "action", action },
+            { "success", false },
+            { "message", std::format("Unrecognized command action '{}'", action) },
+            { "ts", nowMs }
+        };
+    }
+
+    void WebSocketServer::BroadcastFullSnapshot() {
+        auto taskInterface = SKSE::GetTaskInterface();
+        if (taskInterface) {
+            taskInterface->AddTask([this]() {
+                try {
+                    if (!_running.load() || !_server) return;
+
+                    int64_t nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::system_clock::now().time_since_epoch()).count();
+
+                    // 1. character.stats (includes name and language)
+                    Broadcast({
+                        { "type", "data" },
+                        { "id", "character.stats" },
+                        { "fields", Game::StatExtractor::GetPlayerStatsJson() },
+                        { "ts", nowMs }
+                    });
+
+                    // 2. skypotion.alchemy
+                    Broadcast({
+                        { "type", "data" },
+                        { "id", "skypotion.alchemy" },
+                        { "fields", Game::StatExtractor::GetAlchemyStatsJson() },
+                        { "ts", nowMs }
+                    });
+
+                    // 3. player.perks
+                    Broadcast({
+                        { "type", "data" },
+                        { "id", "player.perks" },
+                        { "fields", {
+                            { "perks", Game::PerkExtractor::GetAllPerksJson() },
+                            { "alchemyPerks", Game::PerkExtractor::GetAlchemyPerksSummary() }
+                        }},
+                        { "ts", nowMs }
+                    });
+
+                    // 4. inventory.ingredients
+                    Broadcast({
+                        { "type", "data" },
+                        { "id", "inventory.ingredients" },
+                        { "fields", {
+                            { "items", Game::InventoryExtractor::GetIngredientsJson() }
+                        }},
+                        { "ts", nowMs }
+                    });
+
+                    // 5. inventory.apparel
+                    Broadcast({
+                        { "type", "data" },
+                        { "id", "inventory.apparel" },
+                        { "fields", {
+                            { "items", Game::InventoryExtractor::GetApparelJson() }
+                        }},
+                        { "ts", nowMs }
+                    });
+
+                    // 6. alchemy.menu event
+                    bool isOpen = Game::AlchemyController::IsAlchemyMenuOpen();
+                    Broadcast({
+                        { "type", "event" },
+                        { "event", "alchemy.menu" },
+                        { "isOpen", isOpen },
+                        { "ts", nowMs }
+                    });
+
+                    SKSE::log::info("BroadcastFullSnapshot: broadcasted full game snapshot to clients (alchemy isOpen={})", isOpen);
+                } catch (const std::exception& e) {
+                    SKSE::log::error("Error in BroadcastFullSnapshot: {}", e.what());
+                } catch (...) {
+                    SKSE::log::error("Unknown exception in BroadcastFullSnapshot");
+                }
+            });
+        }
     }
 
 }

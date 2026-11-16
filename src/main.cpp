@@ -1,5 +1,7 @@
 #include "Pch.h"
 #include "server/WebSocketServer.h"
+#include "game/AlchemyController.h"
+#include "game/InventoryExtractor.h"
 
 #include <spdlog/sinks/basic_file_sink.h>
 
@@ -40,6 +42,8 @@ namespace {
             case SKSE::MessagingInterface::kDataLoaded:
                 SKSE::log::info("Skyrim data loaded. Starting SkyPotion WebSocket server on port 8765...");
                 SkyPotion::Server::WebSocketServer::GetSingleton().Start(8765, "0.0.0.0");
+                SkyPotion::Game::MenuOpenCloseHandler::GetSingleton()->Register();
+                SkyPotion::Game::InventoryEventHandler::GetSingleton()->Register();
                 break;
 
             case SKSE::MessagingInterface::kPostLoadGame:

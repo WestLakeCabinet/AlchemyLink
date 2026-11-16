@@ -193,10 +193,13 @@ Skyrim SE / AE / GOG 전용 경량 WebSocket 컴패니언 플러그인입니다.
 ### 방법 1: GitHub Actions (가장 쉽고 추천하는 방법)
 저장소에 `.github/workflows/build.yml`이 포함되어 있으므로, GitHub 저장소로 푸시하면 GitHub의 클라우드 머신에서 자동으로 `SkyPotionSKSE.dll`을 빌드하여 **Artifacts** 탭에서 다운로드할 수 있습니다.
 
-### 방법 2: 원클릭 자동 빌드 스크립트 (`build.ps1`, 가장 편리 ⭐)
-Visual Studio 경로 및 CMake/vcpkg를 자동으로 감지하여 바로 빌드하는 스크립트가 준비되어 있습니다:
+### 방법 2: 원클릭 자동 빌드 및 배포 스크립트 (`build.ps1`, 가장 편리 ⭐)
+Visual Studio 경로, CMake, vcpkg를 자동으로 감지하여 빌드하고 스카이림 플러그인 폴더로 자동 복사합니다:
 ```powershell
 .\build.ps1
+
+# (선택) 복사 대상 스카이림 경로 변경 시:
+.\build.ps1 -skyrimPluginDir "D:\Steam\steamapps\common\Skyrim Special Edition\Data\SKSE\Plugins"
 ```
 
 ### 방법 3: CMake + vcpkg 직접 빌드

@@ -1,4 +1,6 @@
 #include "game/InventoryExtractor.h"
+#include "server/WebSocketServer.h"
+#include <chrono>
 
 namespace SkyPotion::Game {
 
@@ -39,7 +41,7 @@ namespace SkyPotion::Game {
                 { "formId", std::format("0x{:08X}", ingredient->GetFormID()) },
                 { "name", ingredient->GetName() ? ingredient->GetName() : "" },
                 { "count", count },
-                { "weight", Util::Round2(ingredient->GetWeight()) },
+                { "weight", Util::Round3(ingredient->GetWeight()) },
                 { "value", ingredient->GetGoldValue() },
                 { "effects", effectsJson }
             });
@@ -96,7 +98,7 @@ namespace SkyPotion::Game {
 
                 effectsJson.push_back({
                     { "name", effName ? effName : "" },
-                    { "magnitude", Util::Round2(magnitude) }
+                    { "magnitude", Util::Round3(magnitude) }
                 });
             }
 
@@ -113,5 +115,88 @@ namespace SkyPotion::Game {
         }
 
         return itemsArray;
+    }
+
+    InventoryEventHandler* InventoryEventHandler::GetSingleton() {
+        static InventoryEventHandler instance;
+        return &instance;
+    }
+
+    void InventoryEventHandler::Register() {
+        auto* eventHolder = RE::ScriptEventSourceHolder::GetSingleton();
+        if (eventHolder) {
+            eventHolder->AddEventSink<RE::TESContainerChangedEvent>(this);
+            SKSE::log::info("InventoryEventHandler successfully registered with ScriptEventSourceHolder");
+        } else {
+            SKSE::log::warn("ScriptEventSourceHolder unavailable to register InventoryEventHandler");
+        }
+    }
+
+    RE::BSEventNotifyControl InventoryEventHandler::ProcessEvent(
+        const RE::TESContainerChangedEvent* a_event,
+        RE::BSTEventSource<RE::TESContainerChangedEvent>*) {
+        if (!a_event) return RE::BSEventNotifyControl::kContinue;
+
+        constexpr RE::FormID PLAYER_FORM_ID = 0x00000014;
+        if (a_event->oldContainer != PLAYER_FORM_ID && a_event->newContainer != PLAYER_FORM_ID) {
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
+        auto* form = RE::TESForm::LookupByID(a_event->baseObj);
+        if (!form) return RE::BSEventNotifyControl::kContinue;
+
+        bool isIngredient = form->Is(RE::FormType::Ingredient);
+        bool isApparel = form->Is(RE::FormType::Armor);
+
+        if (isIngredient || isApparel) {
+            RequestInventorySync(isIngredient, isApparel);
+        }
+
+        return RE::BSEventNotifyControl::kContinue;
+    }
+
+    void InventoryEventHandler::RequestInventorySync(bool /*isIngredient*/, bool isApparel) {
+        if (isApparel) {
+            _syncApparel.store(true);
+        }
+
+        if (!_syncPending.exchange(true)) {
+            auto taskInterface = SKSE::GetTaskInterface();
+            if (taskInterface) {
+                taskInterface->AddTask([this]() {
+                    ExecuteInventorySync();
+                });
+            }
+        }
+    }
+
+    void InventoryEventHandler::ExecuteInventorySync() {
+        _syncPending.store(false);
+        bool needApparel = _syncApparel.exchange(false);
+
+        int64_t nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+
+        // 1. Broadcast updated ingredients
+        nlohmann::json ingPacket = {
+            { "type", "data" },
+            { "id", "inventory.ingredients" },
+            { "fields", { { "items", InventoryExtractor::GetIngredientsJson() } } },
+            { "ts", nowMs }
+        };
+        Server::WebSocketServer::GetSingleton().Broadcast(ingPacket);
+
+        // 2. Broadcast updated apparel if apparel changed
+        if (needApparel) {
+            nlohmann::json appPacket = {
+                { "type", "data" },
+                { "id", "inventory.apparel" },
+                { "fields", { { "items", InventoryExtractor::GetApparelJson() } } },
+                { "ts", nowMs }
+            };
+            Server::WebSocketServer::GetSingleton().Broadcast(appPacket);
+        }
+
+        SKSE::log::info("InventoryEventHandler: Broadcasted updated inventory (apparel: {})", needApparel);
     }
 }

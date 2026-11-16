@@ -18,6 +18,7 @@ namespace SkyPotion::Server {
         bool IsRunning() const;
 
         void Broadcast(const nlohmann::json& message);
+        void BroadcastFullSnapshot();
 
     private:
         WebSocketServer();
@@ -31,6 +32,7 @@ namespace SkyPotion::Server {
                        const ix::WebSocketMessagePtr& msg);
 
         static nlohmann::json ProcessQuery(const std::string& id, const nlohmann::json& fields);
+        static nlohmann::json ProcessCommand(const std::string& action, const nlohmann::json& payload);
 
         std::unique_ptr<ix::WebSocketServer> _server;
         std::atomic<bool> _running{false};
