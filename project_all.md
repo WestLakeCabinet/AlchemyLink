@@ -198,96 +198,6 @@ namespace SkyPotion::Game {
 }
 </file>
 
-<file path="src/game/PerkExtractor.cpp">
-#include "game/PerkExtractor.h"
-
-namespace SkyPotion::Game {
-
-    nlohmann::json PerkExtractor::GetAllPerksJson() {
-        auto player = RE::PlayerCharacter::GetSingleton();
-        nlohmann::json perksArray = nlohmann::json::array();
-
-        if (!player) return perksArray;
-
-        const std::vector<std::pair<RE::FormID, const char*>> trackedPerks = {
-            { 0x000BE956, "Alchemist 1" },
-            { 0x000C07CA, "Alchemist 2" },
-            { 0x000C07CB, "Alchemist 3" },
-            { 0x000C07CC, "Alchemist 4" },
-            { 0x000C07CD, "Alchemist 5" },
-            { 0x00058215, "Physician" },
-            { 0x00058216, "Benefactor" },
-            { 0x00058217, "Poisoner" },
-            { 0x0005821D, "Purity" },
-            { 0x00058218, "Experimenter 1" },
-            { 0x00105F2A, "Experimenter 2" },
-            { 0x00105F2B, "Experimenter 3" },
-            { 0x00105F2C, "Green Thumb" },
-            { 0x00105F2E, "Snakeblood" }
-        };
-
-        for (const auto& [formId, fallbackName] : trackedPerks) {
-            auto* perk = RE::TESForm::LookupByID<RE::BGSPerk>(formId);
-            if (perk && player->HasPerk(perk)) {
-                const char* realName = perk->GetName();
-                perksArray.push_back({
-                    { "formId", std::format("0x{:08X}", formId) },
-                    { "name", (realName && realName[0] != '\0') ? realName : fallbackName },
-                    { "rank", 1 }
-                });
-            }
-        }
-
-        return perksArray;
-    }
-
-    nlohmann::json PerkExtractor::GetAlchemyPerksSummary() {
-        auto player = RE::PlayerCharacter::GetSingleton();
-        nlohmann::json summary = {
-            { "alchemist", 0 },
-            { "physician", false },
-            { "benefactor", false },
-            { "poisoner", false },
-            { "purity", false },
-            { "experimenter", 0 },
-            { "greenThumb", false },
-            { "snakeblood", false }
-        };
-
-        if (!player) return summary;
-
-        auto hasPerk = [player](RE::FormID formId) -> bool {
-            auto* perk = RE::TESForm::LookupByID<RE::BGSPerk>(formId);
-            return perk && player->HasPerk(perk);
-        };
-
-        // Alchemist 1 ~ 5
-        if (hasPerk(0x000C07CD)) summary["alchemist"] = 5;
-        else if (hasPerk(0x000C07CC)) summary["alchemist"] = 4;
-        else if (hasPerk(0x000C07CB)) summary["alchemist"] = 3;
-        else if (hasPerk(0x000C07CA)) summary["alchemist"] = 2;
-        else if (hasPerk(0x000BE956)) summary["alchemist"] = 1;
-
-        // Core alchemy perks
-        summary["physician"] = hasPerk(0x00058215);
-        summary["benefactor"] = hasPerk(0x00058216);
-        summary["poisoner"] = hasPerk(0x00058217);
-        summary["purity"] = hasPerk(0x0005821D);
-
-        // Experimenter 1 ~ 3
-        if (hasPerk(0x00105F2B)) summary["experimenter"] = 3;
-        else if (hasPerk(0x00105F2A)) summary["experimenter"] = 2;
-        else if (hasPerk(0x00058218)) summary["experimenter"] = 1;
-
-        // Green Thumb & Snakeblood
-        summary["greenThumb"] = hasPerk(0x00105F2C);
-        summary["snakeblood"] = hasPerk(0x00105F2E);
-
-        return summary;
-    }
-}
-</file>
-
 <file path="src/game/PerkExtractor.h">
 #pragma once
 
@@ -361,6 +271,221 @@ namespace SkyPotion::Game {
 }
 </file>
 
+<file path="src/server/WebSocketServer.h">
+#pragma once
+
+#include "Pch.h"
+#include <ixwebsocket/IXWebSocketServer.h>
+#include <ixwebsocket/IXWebSocket.h>
+
+namespace SkyPotion::Server {
+
+    class WebSocketServer {
+    public:
+        static WebSocketServer& GetSingleton() {
+            static WebSocketServer instance;
+            return instance;
+        }
+
+        bool Start(uint16_t port = 8765, const std::string& host = "0.0.0.0");
+        void Stop();
+        bool IsRunning() const;
+
+        void Broadcast(const nlohmann::json& message);
+
+    private:
+        WebSocketServer();
+        ~WebSocketServer();
+
+        WebSocketServer(const WebSocketServer&) = delete;
+        WebSocketServer& operator=(const WebSocketServer&) = delete;
+
+        void OnMessage(std::shared_ptr<ix::ConnectionState> connectionState,
+                       ix::WebSocket& webSocket,
+                       const ix::WebSocketMessagePtr& msg);
+
+        static nlohmann::json ProcessQuery(const std::string& id, const nlohmann::json& fields);
+
+        std::unique_ptr<ix::WebSocketServer> _server;
+        std::atomic<bool> _running{false};
+        uint16_t _port{8765};
+        std::string _host{"0.0.0.0"};
+    };
+
+}
+</file>
+
+<file path="src/main.cpp">
+#include "Pch.h"
+#include "server/WebSocketServer.h"
+
+#include <spdlog/sinks/basic_file_sink.h>
+
+using namespace std::literals;
+
+SKSEPluginInfo(
+    .Version = REL::Version{ 1, 0, 0, 0 },
+    .Name = "SkyPotionSKSE"sv,
+    .Author = "Dolzzo"sv,
+    .SupportEmail = ""sv,
+    .StructCompatibility = SKSE::StructCompatibility::Independent,
+    .RuntimeCompatibility = SKSE::VersionIndependence::AddressLibrary,
+    .MinimumSKSEVersion = REL::Version{ 0, 0, 0, 0 }
+);
+
+namespace {
+    void InitializeLogging() {
+        auto path = SKSE::log::log_directory();
+        if (!path) {
+            return;
+        }
+
+        *path /= "SkyPotionSKSE.log";
+        auto sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(path->string(), true);
+        auto log = std::make_shared<spdlog::logger>("global log", std::move(sink));
+
+        log->set_level(spdlog::level::info);
+        log->flush_on(spdlog::level::info);
+
+        spdlog::set_default_logger(std::move(log));
+        spdlog::set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%l] [%t] %v");
+    }
+
+    void OnMessage(SKSE::MessagingInterface::Message* a_msg) {
+        if (!a_msg) return;
+
+        switch (a_msg->type) {
+            case SKSE::MessagingInterface::kDataLoaded:
+                SKSE::log::info("Skyrim data loaded. Starting SkyPotion WebSocket server on port 8765...");
+                SkyPotion::Server::WebSocketServer::GetSingleton().Start(8765, "0.0.0.0");
+                break;
+
+            case SKSE::MessagingInterface::kPostLoadGame:
+            case SKSE::MessagingInterface::kNewGame:
+                SKSE::log::info("Game session started or loaded.");
+                break;
+
+            default:
+                break;
+        }
+    }
+}
+
+SKSEPluginLoad(const SKSE::LoadInterface* a_skse) {
+    InitializeLogging();
+
+    SKSE::Init(a_skse);
+
+    SKSE::log::info("----------------------------------------");
+    SKSE::log::info("SkyPotion SKSE Plugin v1.0.0 loaded!");
+    SKSE::log::info("Targeting Skyrim SE / AE / GOG");
+    SKSE::log::info("----------------------------------------");
+
+    auto messaging = SKSE::GetMessagingInterface();
+    if (!messaging) {
+        SKSE::log::error("Failed to get SKSE messaging interface!");
+        return false;
+    }
+
+    if (!messaging->RegisterListener(OnMessage)) {
+        SKSE::log::error("Failed to register SKSE message listener!");
+        return false;
+    }
+
+    return true;
+}
+</file>
+
+<file path="src/game/PerkExtractor.cpp">
+#include "game/PerkExtractor.h"
+
+namespace SkyPotion::Game {
+
+    nlohmann::json PerkExtractor::GetAllPerksJson() {
+        auto player = RE::PlayerCharacter::GetSingleton();
+        nlohmann::json perksArray = nlohmann::json::array();
+
+        if (!player) return perksArray;
+
+        const std::vector<std::pair<RE::FormID, const char*>> trackedPerks = {
+            { 0x000BE127, "Alchemist 1" },
+            { 0x000C07CA, "Alchemist 2" },
+            { 0x000C07CB, "Alchemist 3" },
+            { 0x000C07CC, "Alchemist 4" },
+            { 0x000C07CD, "Alchemist 5" },
+            { 0x00058215, "Physician" },
+            { 0x00058216, "Benefactor" },
+            { 0x00058217, "Poisoner" },
+            { 0x0005821D, "Purity" },
+            { 0x00058218, "Experimenter 1" },
+            { 0x00105F2A, "Experimenter 2" },
+            { 0x00105F2B, "Experimenter 3" },
+            { 0x00105F2E, "Green Thumb" },
+            { 0x00105F2C, "Snakeblood" }
+        };
+
+        for (const auto& [formId, fallbackName] : trackedPerks) {
+            auto* perk = RE::TESForm::LookupByID<RE::BGSPerk>(formId);
+            if (perk && player->HasPerk(perk)) {
+                const char* realName = perk->GetName();
+                perksArray.push_back({
+                    { "formId", std::format("0x{:08X}", formId) },
+                    { "name", (realName && realName[0] != '\0') ? realName : fallbackName },
+                    { "rank", 1 }
+                });
+            }
+        }
+
+        return perksArray;
+    }
+
+    nlohmann::json PerkExtractor::GetAlchemyPerksSummary() {
+        auto player = RE::PlayerCharacter::GetSingleton();
+        nlohmann::json summary = {
+            { "alchemist", 0 },
+            { "physician", false },
+            { "benefactor", false },
+            { "poisoner", false },
+            { "purity", false },
+            { "experimenter", 0 },
+            { "greenThumb", false },
+            { "snakeblood", false }
+        };
+
+        if (!player) return summary;
+
+        auto hasPerk = [player](RE::FormID formId) -> bool {
+            auto* perk = RE::TESForm::LookupByID<RE::BGSPerk>(formId);
+            return perk && player->HasPerk(perk);
+        };
+
+        // Alchemist 1 ~ 5
+        if (hasPerk(0x000C07CD)) summary["alchemist"] = 5;
+        else if (hasPerk(0x000C07CC)) summary["alchemist"] = 4;
+        else if (hasPerk(0x000C07CB)) summary["alchemist"] = 3;
+        else if (hasPerk(0x000C07CA)) summary["alchemist"] = 2;
+        else if (hasPerk(0x000BE127)) summary["alchemist"] = 1;
+
+        // Core alchemy perks
+        summary["physician"] = hasPerk(0x00058215);
+        summary["benefactor"] = hasPerk(0x00058216);
+        summary["poisoner"] = hasPerk(0x00058217);
+        summary["purity"] = hasPerk(0x0005821D);
+
+        // Experimenter 1 ~ 3
+        if (hasPerk(0x00105F2B)) summary["experimenter"] = 3;
+        else if (hasPerk(0x00105F2A)) summary["experimenter"] = 2;
+        else if (hasPerk(0x00058218)) summary["experimenter"] = 1;
+
+        // Green Thumb & Snakeblood
+        summary["greenThumb"] = hasPerk(0x00105F2E);
+        summary["snakeblood"] = hasPerk(0x00105F2C);
+
+        return summary;
+    }
+}
+</file>
+
 <file path="src/server/WebSocketServer.cpp">
 #include "server/WebSocketServer.h"
 #include "game/InventoryExtractor.h"
@@ -389,6 +514,10 @@ namespace SkyPotion::Server {
 
         try {
             _server = std::make_unique<ix::WebSocketServer>(_port, _host);
+
+            // Disable per-message deflate compression to prevent handshake failure with Android OkHttp
+            // ("unexpected Sec-WebSocket-Extensions in response header")
+            _server->disablePerMessageDeflate();
 
             _server->setOnClientMessageCallback(
                 [this](std::shared_ptr<ix::ConnectionState> connectionState,
@@ -582,136 +711,19 @@ namespace SkyPotion::Server {
 }
 </file>
 
-<file path="src/server/WebSocketServer.h">
-#pragma once
-
-#include "Pch.h"
-#include <ixwebsocket/IXWebSocketServer.h>
-#include <ixwebsocket/IXWebSocket.h>
-
-namespace SkyPotion::Server {
-
-    class WebSocketServer {
-    public:
-        static WebSocketServer& GetSingleton() {
-            static WebSocketServer instance;
-            return instance;
-        }
-
-        bool Start(uint16_t port = 8765, const std::string& host = "0.0.0.0");
-        void Stop();
-        bool IsRunning() const;
-
-        void Broadcast(const nlohmann::json& message);
-
-    private:
-        WebSocketServer();
-        ~WebSocketServer();
-
-        WebSocketServer(const WebSocketServer&) = delete;
-        WebSocketServer& operator=(const WebSocketServer&) = delete;
-
-        void OnMessage(std::shared_ptr<ix::ConnectionState> connectionState,
-                       ix::WebSocket& webSocket,
-                       const ix::WebSocketMessagePtr& msg);
-
-        static nlohmann::json ProcessQuery(const std::string& id, const nlohmann::json& fields);
-
-        std::unique_ptr<ix::WebSocketServer> _server;
-        std::atomic<bool> _running{false};
-        uint16_t _port{8765};
-        std::string _host{"0.0.0.0"};
-    };
-
-}
-</file>
-
-<file path="src/main.cpp">
-#include "Pch.h"
-#include "server/WebSocketServer.h"
-
-#include <spdlog/sinks/basic_file_sink.h>
-
-using namespace std::literals;
-
-SKSEPluginInfo(
-    .Version = REL::Version{ 1, 0, 0, 0 },
-    .Name = "SkyPotionSKSE"sv,
-    .Author = "Dolzzo"sv,
-    .SupportEmail = ""sv,
-    .StructCompatibility = SKSE::StructCompatibility::Independent,
-    .RuntimeCompatibility = SKSE::VersionIndependence::AddressLibrary,
-    .MinimumSKSEVersion = REL::Version{ 0, 0, 0, 0 }
-);
-
-namespace {
-    void InitializeLogging() {
-        auto path = SKSE::log::log_directory();
-        if (!path) {
-            return;
-        }
-
-        *path /= "SkyPotionSKSE.log";
-        auto sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(path->string(), true);
-        auto log = std::make_shared<spdlog::logger>("global log", std::move(sink));
-
-        log->set_level(spdlog::level::info);
-        log->flush_on(spdlog::level::info);
-
-        spdlog::set_default_logger(std::move(log));
-        spdlog::set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%l] [%t] %v");
-    }
-
-    void OnMessage(SKSE::MessagingInterface::Message* a_msg) {
-        if (!a_msg) return;
-
-        switch (a_msg->type) {
-            case SKSE::MessagingInterface::kDataLoaded:
-                SKSE::log::info("Skyrim data loaded. Starting SkyPotion WebSocket server on port 8765...");
-                SkyPotion::Server::WebSocketServer::GetSingleton().Start(8765, "0.0.0.0");
-                break;
-
-            case SKSE::MessagingInterface::kPostLoadGame:
-            case SKSE::MessagingInterface::kNewGame:
-                SKSE::log::info("Game session started or loaded.");
-                break;
-
-            default:
-                break;
-        }
-    }
-}
-
-SKSEPluginLoad(const SKSE::LoadInterface* a_skse) {
-    InitializeLogging();
-
-    SKSE::Init(a_skse);
-
-    SKSE::log::info("----------------------------------------");
-    SKSE::log::info("SkyPotion SKSE Plugin v1.0.0 loaded!");
-    SKSE::log::info("Targeting Skyrim SE / AE / GOG");
-    SKSE::log::info("----------------------------------------");
-
-    auto messaging = SKSE::GetMessagingInterface();
-    if (!messaging) {
-        SKSE::log::error("Failed to get SKSE messaging interface!");
-        return false;
-    }
-
-    if (!messaging->RegisterListener(OnMessage)) {
-        SKSE::log::error("Failed to register SKSE message listener!");
-        return false;
-    }
-
-    return true;
-}
-</file>
-
 <file path="src/Pch.h">
 #pragma once
 
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+
 #include <cstdint>
 #include <cstddef>
+
 #include <array>
 #include <string>
 #include <string_view>
@@ -727,6 +739,9 @@ SKSEPluginLoad(const SKSE::LoadInterface* a_skse) {
 
 #include <RE/Skyrim.h>
 #include <SKSE/SKSE.h>
+
+#include <winsock2.h>
+#include <ws2tcpip.h>
 
 #include <nlohmann/json.hpp>
 </file>
@@ -747,24 +762,33 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Ensure CRT matches CommonLibSSE-NG (/MD dynamic CRT with static library linkage)
 set(VCPKG_TARGET_TRIPLET "x64-windows-static-md" CACHE STRING "vcpkg triplet matching /MD CRT")
 
-# Enable MSVC multi-processor parallel compilation (/MP)
+# Enable MSVC multi-processor parallel compilation (/MP) and UTF-8 source/exec charset
 if(MSVC)
-    add_compile_options(/MP)
+    add_compile_options(/MP /utf-8)
 endif()
+
+# 여기에 추가 (라인 20 부근)
+add_compile_definitions(
+    WIN32_LEAN_AND_MEAN
+    NOMINMAX
+)
 
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(ixwebsocket CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
 
-# Disable CommonLibSSE-NG internal tests (prevents dependency on Catch2)
+# CommonLibSSE-NG build options (SE/AE enabled, tests and VR disabled)
 set(BUILD_TESTS OFF CACHE BOOL "Disable CommonLibSSE unit tests" FORCE)
+set(ENABLE_SKYRIM_SE ON CACHE BOOL "Enable Skyrim SE support" FORCE)
+set(ENABLE_SKYRIM_AE ON CACHE BOOL "Enable Skyrim AE (1.6+ / 1.7+) support" FORCE)
+set(ENABLE_SKYRIM_VR OFF CACHE BOOL "Disable Skyrim VR support" FORCE)
 
-# CommonLibSSE-NG (Automatic download & build)
+# CommonLibSSE-NG (Maintained upstream supporting 1.7.104 & Address Library Format 5)
 include(FetchContent)
 FetchContent_Declare(
     CommonLibSSE-NG
-    GIT_REPOSITORY https://github.com/CharmedBaryon/CommonLibSSE-NG.git
-    GIT_TAG        main
+    GIT_REPOSITORY https://github.com/alandtse/CommonLibSSE-NG.git
+    GIT_TAG        ng
 )
 FetchContent_MakeAvailable(CommonLibSSE-NG)
 
@@ -819,7 +843,8 @@ target_include_directories(
     "nlohmann-json",
     "ixwebsocket",
     "spdlog",
-    "rapidcsv"
+    "rapidcsv",
+    "directxtk"
   ]
 }
 </file>

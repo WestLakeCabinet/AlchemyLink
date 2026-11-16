@@ -13,8 +13,8 @@ namespace SkyPotion::Game {
         double baseSkill = avOwner->GetBaseActorValue(RE::ActorValue::kAlchemy);
 
         return {
-            { "alchemy", currentSkill },
-            { "alchemyBase", baseSkill }
+            { "alchemy", Util::Round2(currentSkill) },
+            { "alchemyBase", Util::Round2(baseSkill) }
         };
     }
 
@@ -27,13 +27,13 @@ namespace SkyPotion::Game {
 
         return {
             { "level", player->GetLevel() },
-            { "health", avOwner->GetActorValue(RE::ActorValue::kHealth) },
-            { "healthBase", avOwner->GetBaseActorValue(RE::ActorValue::kHealth) },
-            { "magicka", avOwner->GetActorValue(RE::ActorValue::kMagicka) },
-            { "magickaBase", avOwner->GetBaseActorValue(RE::ActorValue::kMagicka) },
-            { "stamina", avOwner->GetActorValue(RE::ActorValue::kStamina) },
-            { "staminaBase", avOwner->GetBaseActorValue(RE::ActorValue::kStamina) },
-            { "inventoryWeight", player->GetWeightInContainer() }
+            { "health", Util::Round2(avOwner->GetActorValue(RE::ActorValue::kHealth)) },
+            { "healthBase", Util::Round2(avOwner->GetBaseActorValue(RE::ActorValue::kHealth)) },
+            { "magicka", Util::Round2(avOwner->GetActorValue(RE::ActorValue::kMagicka)) },
+            { "magickaBase", Util::Round2(avOwner->GetBaseActorValue(RE::ActorValue::kMagicka)) },
+            { "stamina", Util::Round2(avOwner->GetActorValue(RE::ActorValue::kStamina)) },
+            { "staminaBase", Util::Round2(avOwner->GetBaseActorValue(RE::ActorValue::kStamina)) },
+            { "inventoryWeight", Util::Round2(player->GetWeightInContainer()) }
         };
     }
 }

@@ -129,6 +129,63 @@ Skyrim SE / AE / GOG 전용 경량 WebSocket 컴패니언 플러그인입니다.
   }
   ```
 
+### 5. 연금술 마스터 게임 데이터 (`gamedata.alchemy`)
+- **설명**: 게임 내 모든 유효한 연금술 재료(`INGR`)와, 해당 재료에 바인딩된 고유 `BaseEffect(MGEF)`만 화이트리스트로 추출하여 반환합니다. (레시피 엔진 제약조건: baseEffect <= 127, MagicEffect <= 512 완벽 준수)
+- **요청**:
+  ```json
+  { "type": "query", "id": "gamedata.alchemy" }
+  ```
+- **응답**:
+  ```json
+  {
+    "type": "data",
+    "id": "gamedata.alchemy",
+    "fields": {
+      "baseEffectCount": 60,
+      "ingredientCount": 115,
+      "baseEffects": [
+        {
+          "formId": "0x0003EB42",
+          "editorId": "AlchDamageHealth",
+          "name": "Damage Health",
+          "baseCost": 3.0,
+          "noMag": false,
+          "noDur": false,
+          "affectMag": true,
+          "affectDur": false,
+          "isHostile": true,
+          "isPoison": true,
+          "isBeneficial": false,
+          "isHarmful": true,
+          "isPhysician": false,
+          "keywords": "MagicAlchHarmful",
+          "description": "Causes <mag> points of poison damage."
+        }
+      ],
+      "ingredients": [
+        {
+          "formId": "0x000134AA",
+          "name": "Thistle Branch",
+          "value": 1,
+          "weight": 0.1,
+          "ingredientValue": 23,
+          "effectValue": 23,
+          "origin": "Skyrim.esm",
+          "fileName": "Skyrim.esm",
+          "defaultStock": 1,
+          "slots": [
+            { "formId": "0x0003EAEB", "magnitude": 3.0, "duration": 60 },
+            { "formId": "0x00073F23", "magnitude": 2.0, "duration": 10 },
+            { "formId": "0x00090041", "magnitude": 3.0, "duration": 0 },
+            { "formId": "0x0003EB1E", "magnitude": 2.0, "duration": 60 }
+          ]
+        }
+      ]
+    },
+    "ts": 1794687968031
+  }
+  ```
+
 ---
 
 ## 🛠️ 빌드 방법 (How to Build)

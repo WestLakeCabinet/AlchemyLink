@@ -1,0 +1,1 @@
+npx repomix --include "**/*.cpp, **/*.h, CMakeLists.*,vcpkg.json,build" --output project_all.md

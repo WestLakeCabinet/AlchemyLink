@@ -39,7 +39,7 @@ namespace SkyPotion::Game {
                 { "formId", std::format("0x{:08X}", ingredient->GetFormID()) },
                 { "name", ingredient->GetName() ? ingredient->GetName() : "" },
                 { "count", count },
-                { "weight", ingredient->GetWeight() },
+                { "weight", Util::Round2(ingredient->GetWeight()) },
                 { "value", ingredient->GetGoldValue() },
                 { "effects", effectsJson }
             });
@@ -96,7 +96,7 @@ namespace SkyPotion::Game {
 
                 effectsJson.push_back({
                     { "name", effName ? effName : "" },
-                    { "magnitude", magnitude }
+                    { "magnitude", Util::Round2(magnitude) }
                 });
             }
 

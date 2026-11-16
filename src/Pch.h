@@ -22,6 +22,7 @@
 #include <mutex>
 #include <format>
 #include <algorithm>
+#include <cmath>
 
 #include <RE/Skyrim.h>
 #include <SKSE/SKSE.h>
@@ -30,3 +31,9 @@
 #include <ws2tcpip.h>
 
 #include <nlohmann/json.hpp>
+
+namespace SkyPotion::Util {
+    inline double Round2(double value) {
+        return std::round(value * 100.0) / 100.0;
+    }
+}

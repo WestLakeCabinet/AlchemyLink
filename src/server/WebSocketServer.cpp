@@ -2,6 +2,7 @@
 #include "game/InventoryExtractor.h"
 #include "game/PerkExtractor.h"
 #include "game/StatExtractor.h"
+#include "game/AlchemyDataExtractor.h"
 
 #include <chrono>
 #include <future>
@@ -205,6 +206,10 @@ namespace SkyPotion::Server {
         // 6. Generic/Actor Stats Query
         else if (id == "character.stats") {
             respFields = Game::StatExtractor::GetPlayerStatsJson();
+        }
+        // 7. Master Game Data Query (Alchemy BaseEffects + Playable Ingredients)
+        else if (id == "gamedata.alchemy" || id == "gamedata.all" || id == "alchemy.database") {
+            respFields = Game::AlchemyDataExtractor::GetAlchemyGameDataJson();
         }
         else {
             respFields["warning"] = "Unrecognized query id";
