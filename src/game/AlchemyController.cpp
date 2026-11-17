@@ -746,14 +746,24 @@ namespace SkyPotion::Game {
                     promise->set_value(true);
                 });
 
-                // If timed out waiting for main thread, stop the monitor loop so tasks don't accumulate
-                if (future.wait_for(std::chrono::seconds(2)) == std::future_status::ready) {
-                    if (!future.get()) {
+                // Wait for task completion. If main thread is paused (Alt-Tab, System Menu, etc.),
+                // keep waiting without killing the monitor thread or accumulating duplicate tasks.
+                bool taskDone = false;
+                while (session->active.load() && !SkyPotion::g_isShuttingDown.load() &&
+                       Server::WebSocketServer::GetSingleton().HasConnectedClients()) {
+                    if (future.wait_for(std::chrono::milliseconds(250)) == std::future_status::ready) {
+                        taskDone = true;
+                        if (!future.get()) {
+                            // Menu closed or invalid state, exit cleanly
+                            session->active.store(false);
+                            return;
+                        }
                         break;
                     }
-                } else {
-                    SKSE::log::warn("CraftingMenu monitor timed out waiting for main thread. Stopping monitor.");
-                    break;
+                }
+
+                if (!taskDone) {
+                    break; // Shutting down, session cancelled, or client disconnected
                 }
             }
 
@@ -817,8 +827,20 @@ namespace SkyPotion::Game {
 
         if (a_event->menuName == RE::LoadingMenu::MENU_NAME) {
             if (a_event->opening) {
-                SKSE::log::info("MenuOpenCloseEvent: LoadingMenu opening. Stopping craft.");
+                SKSE::log::info("MenuOpenCloseEvent: LoadingMenu opening. Stopping craft and monitor session.");
                 AlchemyController::StopCrafting();
+                StopMonitoring();
+
+                int64_t nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::system_clock::now().time_since_epoch()).count();
+                nlohmann::json evt = {
+                    { "type", "event" },
+                    { "event", "alchemy.menu" },
+                    { "isOpen", false },
+                    { "selectedIngredients", nlohmann::json::array() },
+                    { "ts", nowMs }
+                };
+                Server::WebSocketServer::GetSingleton().Broadcast(evt);
             } else {
                 SKSE::log::info("MenuOpenCloseEvent: LoadingMenu closed. Scheduling session snapshot.");
                 auto taskInterface = SKSE::GetTaskInterface();
