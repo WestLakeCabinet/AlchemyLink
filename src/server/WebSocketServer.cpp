@@ -144,8 +144,8 @@ namespace SkyPotion::Server {
                             }
                         });
 
-                        // Wait up to 500ms for main thread completion
-                        if (future.wait_for(std::chrono::milliseconds(500)) == std::future_status::ready) {
+                        // Wait up to 2000ms for main thread completion
+                        if (future.wait_for(std::chrono::milliseconds(2000)) == std::future_status::ready) {
                             nlohmann::json response = future.get();
                             webSocket.sendText(response.dump());
                         } else {
@@ -190,8 +190,8 @@ namespace SkyPotion::Server {
                             }
                         });
 
-                        // Wait up to 500ms for main thread completion
-                        if (future.wait_for(std::chrono::milliseconds(500)) == std::future_status::ready) {
+                        // Wait up to 2000ms for main thread completion
+                        if (future.wait_for(std::chrono::milliseconds(2000)) == std::future_status::ready) {
                             nlohmann::json response = future.get();
                             webSocket.sendText(response.dump());
                         } else {

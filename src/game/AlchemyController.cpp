@@ -180,75 +180,7 @@ namespace SkyPotion::Game {
     }
 
     bool AlchemyController::ClearSelectedIngredients() {
-        auto* alchemyMenu = GetAlchemyMenu();
-        if (!alchemyMenu || !IsAlchemyItemListReady()) {
-            return false;
-        }
-
-        auto* ui = RE::UI::GetSingleton();
-        auto craftingMenu = (ui && ui->IsMenuOpen(RE::CraftingMenu::MENU_NAME))
-            ? ui->GetMenu<RE::CraftingMenu>(RE::CraftingMenu::MENU_NAME)
-            : nullptr;
-
-        RE::GFxValue targetList = GetTargetItemList(alchemyMenu, craftingMenu.get());
-        SKSE::log::info("ClearSelectedIngredients: targetList.isObj={}, selectedIndexes.size={}",
-            targetList.IsObject(), alchemyMenu->selectedIndexes.size());
-
-        // 1. Untoggle any selected items in Flash UI using their indices
-        if (targetList.IsObject()) {
-            std::vector<std::uint32_t> toUntoggle;
-            for (std::uint32_t idx : alchemyMenu->selectedIndexes) {
-                toUntoggle.push_back(idx);
-            }
-            for (std::uint32_t i = 0; i < alchemyMenu->ingredientEntries.size(); ++i) {
-                if (alchemyMenu->ingredientEntries[i].isSelected) {
-                    if (std::find(toUntoggle.begin(), toUntoggle.end(), i) == toUntoggle.end()) {
-                        toUntoggle.push_back(i);
-                    }
-                }
-            }
-
-            for (std::uint32_t idx : toUntoggle) {
-                SKSE::log::info("ClearSelectedIngredients: Untoggling Flash entry at index {}", idx);
-                RE::GFxValue indexVal(static_cast<double>(idx));
-                targetList.SetMember("selectedIndex", indexVal);
-
-                RE::GFxValue args[2];
-                args[0] = static_cast<double>(idx);
-                args[1] = 0.0;
-                targetList.Invoke("onItemSelect", nullptr, args, 1);
-                targetList.Invoke("onItemPress", nullptr, args, 2);
-            }
-            targetList.Invoke("UpdateList");
-        }
-
-        // 2. Also deselect in C++ engine
-        auto* userEvents = RE::UserEvents::GetSingleton();
-        if (userEvents) {
-            int maxTries = 10;
-            while (!alchemyMenu->selectedIndexes.empty() && maxTries-- > 0) {
-                std::uint32_t prevSize = static_cast<std::uint32_t>(alchemyMenu->selectedIndexes.size());
-                std::uint32_t firstIdx = alchemyMenu->selectedIndexes.front();
-
-                alchemyMenu->currentIngredientIdx = firstIdx;
-                bool ok = alchemyMenu->ProcessUserEvent(&userEvents->accept);
-                SKSE::log::info("ClearSelectedIngredients: C++ idx {}, ret={}, count {} -> {}",
-                    firstIdx, ok, prevSize, alchemyMenu->selectedIndexes.size());
-
-                if (alchemyMenu->selectedIndexes.size() >= prevSize) {
-                    break;
-                }
-            }
-        }
-
-        // Ensure flags and array are fully cleared
-        for (auto& entry : alchemyMenu->ingredientEntries) {
-            entry.isSelected = 0;
-        }
-        alchemyMenu->selectedIndexes.clear();
-
-        RefreshAlchemyUI(alchemyMenu);
-        return true;
+        return SelectIngredients(std::vector<RE::FormID>{}, false).success;
     }
 
     std::vector<RE::FormID> AlchemyController::GetSelectedIngredientFormIDs() {
@@ -309,144 +241,148 @@ namespace SkyPotion::Game {
             return result;
         }
 
-        auto* userEvents = RE::UserEvents::GetSingleton();
-        if (!userEvents) {
-            result.success = false;
-            result.message = "UserEvents subsystem unavailable";
-            return result;
-        }
-
         auto* ui = RE::UI::GetSingleton();
         auto craftingMenu = (ui && ui->IsMenuOpen(RE::CraftingMenu::MENU_NAME))
             ? ui->GetMenu<RE::CraftingMenu>(RE::CraftingMenu::MENU_NAME)
             : nullptr;
 
         RE::GFxValue targetList = GetTargetItemList(alchemyMenu, craftingMenu.get());
-        SKSE::log::info("SelectIngredients: requested {} FormIDs. targetList.isObj={}, initial selectedIndexes: {}",
-            formIds.size(), targetList.IsObject(), alchemyMenu->selectedIndexes.size());
-
-        if (formIds.empty()) {
-            ClearSelectedIngredients();
-            result.success = true;
-            result.message = "Cleared ingredient selections";
+        if (!targetList.IsObject()) {
+            result.success = false;
+            result.message = "Target item list not found";
             return result;
         }
 
-        // 1. Clear currently selected ingredients
-        ClearSelectedIngredients();
-        SKSE::log::info("After Clear: selectedIndexes count: {}", alchemyMenu->selectedIndexes.size());
-
-        // 2. Select each requested ingredient (up to 3)
-        for (auto targetId : formIds) {
-            if (result.selectedIngredients.size() >= 3) {
-                break;
+        // 1. Gather currently selected FormIDs & their entry indices
+        std::map<RE::FormID, std::uint32_t> currentSelectedMap;
+        for (std::uint32_t idx : alchemyMenu->selectedIndexes) {
+            if (idx < alchemyMenu->ingredientEntries.size()) {
+                auto& entry = alchemyMenu->ingredientEntries[idx];
+                if (entry.ingredient && entry.ingredient->object) {
+                    currentSelectedMap[entry.ingredient->object->GetFormID()] = idx;
+                }
             }
+        }
+        for (std::uint32_t i = 0; i < alchemyMenu->ingredientEntries.size(); ++i) {
+            auto& entry = alchemyMenu->ingredientEntries[i];
+            if (entry.isSelected && entry.ingredient && entry.ingredient->object) {
+                currentSelectedMap[entry.ingredient->object->GetFormID()] = i;
+            }
+        }
 
+        // 2. Prepare target FormIDs (deduplicated, max 3)
+        std::vector<RE::FormID> targetFormIds;
+        for (auto id : formIds) {
+            if (targetFormIds.size() >= 3) break;
+            if (std::find(targetFormIds.begin(), targetFormIds.end(), id) == targetFormIds.end()) {
+                targetFormIds.push_back(id);
+            }
+        }
+
+        // 3. Compute Diff
+        // Items to remove: currently selected but not in target
+        std::vector<std::pair<RE::FormID, std::uint32_t>> toRemove;
+        for (const auto& [currId, currIdx] : currentSelectedMap) {
+            if (std::find(targetFormIds.begin(), targetFormIds.end(), currId) == targetFormIds.end()) {
+                toRemove.emplace_back(currId, currIdx);
+            }
+        }
+
+        // Items to add: in target but not currently selected
+        std::vector<RE::FormID> toAdd;
+        for (auto targetId : targetFormIds) {
+            if (currentSelectedMap.find(targetId) == currentSelectedMap.end()) {
+                toAdd.push_back(targetId);
+            }
+        }
+
+        SKSE::log::info("SelectIngredients Diff: curr={}, target={}, remove={}, add={}",
+            currentSelectedMap.size(), targetFormIds.size(), toRemove.size(), toAdd.size());
+
+        // Fast-path: if diff is empty, nothing to toggle!
+        if (toRemove.empty() && toAdd.empty()) {
+            for (auto id : targetFormIds) {
+                auto it = currentSelectedMap.find(id);
+                if (it != currentSelectedMap.end() && it->second < alchemyMenu->ingredientEntries.size()) {
+                    auto& entry = alchemyMenu->ingredientEntries[it->second];
+                    const char* name = (entry.ingredient && entry.ingredient->object) ? entry.ingredient->object->GetName() : nullptr;
+                    result.selectedIngredients.push_back(name ? name : std::format("0x{:08X}", id));
+                }
+            }
+            result.success = true;
+            result.message = "Selections already match";
+            return result;
+        }
+
+        // 4. Untoggle items via Scaleform onItemPress (natural engine untoggle)
+        for (const auto& [remId, remIdx] : toRemove) {
+            SKSE::log::info("SelectIngredients: Untoggling 0x{:08X} at index {}", remId, remIdx);
+            RE::GFxValue indexVal(static_cast<double>(remIdx));
+            targetList.SetMember("selectedIndex", indexVal);
+
+            RE::GFxValue args[2];
+            args[0] = static_cast<double>(remIdx);
+            args[1] = 0.0;
+            targetList.Invoke("onItemSelect", nullptr, args, 1);
+            targetList.Invoke("onItemPress", nullptr, args, 2);
+        }
+
+        // 5. Toggle ON items to add via Scaleform onItemPress
+        for (auto addId : toAdd) {
             bool found = false;
             for (std::uint32_t i = 0; i < alchemyMenu->ingredientEntries.size(); ++i) {
                 auto& entry = alchemyMenu->ingredientEntries[i];
-                if (!entry.ingredient || !entry.ingredient->object) {
-                    continue;
-                }
+                if (!entry.ingredient || !entry.ingredient->object) continue;
 
-                if (entry.ingredient->object->GetFormID() == targetId) {
+                if (entry.ingredient->object->GetFormID() == addId) {
                     found = true;
+                    SKSE::log::info("SelectIngredients: Toggling ON 0x{:08X} at index {}", addId, i);
+                    RE::GFxValue indexVal(static_cast<double>(i));
+                    targetList.SetMember("selectedIndex", indexVal);
 
-                    // (A) Trigger via Scaleform ActionScript ItemList (UI highlight & checkbox toggle)
-                    if (targetList.IsObject()) {
-                        int flashIndex = -1;
-                        RE::GFxValue entryList;
-                        if (targetList.GetMember("entryList", &entryList) && entryList.IsArray()) {
-                            uint32_t count = entryList.GetArraySize();
-                            for (uint32_t j = 0; j < count; ++j) {
-                                RE::GFxValue entryObj;
-                                entryList.GetElement(j, &entryObj);
-                                if (entryObj.IsObject()) {
-                                    RE::GFxValue formIdVal;
-                                    if (entryObj.GetMember("formId", &formIdVal) || entryObj.GetMember("formID", &formIdVal)) {
-                                        if (formIdVal.IsNumber() && static_cast<RE::FormID>(formIdVal.GetNumber()) == targetId) {
-                                            flashIndex = static_cast<int>(j);
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        int chosenIndex = (flashIndex >= 0) ? flashIndex : static_cast<int>(i);
-                        SKSE::log::info("Target 0x{:08X}: flashIdx={}, cppIdx={}", targetId, flashIndex, i);
-
-                        RE::GFxValue indexVal(static_cast<double>(chosenIndex));
-                        targetList.SetMember("selectedIndex", indexVal);
-
-                        RE::GFxValue args[2];
-                        args[0] = static_cast<double>(chosenIndex);
-                        args[1] = 0.0;
-
-                        targetList.Invoke("onItemSelect", nullptr, args, 1);
-                        targetList.Invoke("onItemPress", nullptr, args, 2);
-                        targetList.Invoke("UpdateList");
-                    }
-
-                    // (B) Also trigger via C++ engine UserEvents if Flash onItemPress did not toggle it
-                    if (!entry.isSelected) {
-                        alchemyMenu->currentIngredientIdx = i;
-                        uint8_t wasSelected = entry.isSelected;
-                        size_t countBefore = alchemyMenu->selectedIndexes.size();
-
-                        bool retAccept = alchemyMenu->ProcessUserEvent(&userEvents->accept);
-                        SKSE::log::info("Target 0x{:08X} (idx {}): ProcessUserEvent(&accept) ret={}, wasSel={}, isSel={}, count {} -> {}",
-                            targetId, i, retAccept, wasSelected, entry.isSelected, countBefore, alchemyMenu->selectedIndexes.size());
-
-                        if (alchemyMenu->selectedIndexes.size() == countBefore && !entry.isSelected) {
-                            RE::BSFixedString acceptStr("Accept");
-                            bool retStr = alchemyMenu->ProcessUserEvent(&acceptStr);
-                            SKSE::log::info("  Trying BSFixedString('Accept'): ret={}, count={}", retStr, alchemyMenu->selectedIndexes.size());
-
-                            if (alchemyMenu->selectedIndexes.size() == countBefore) {
-                                RE::BSFixedString activateStr("Activate");
-                                bool retAct = alchemyMenu->ProcessUserEvent(&activateStr);
-                                SKSE::log::info("  Trying BSFixedString('Activate'): ret={}, count={}", retAct, alchemyMenu->selectedIndexes.size());
-                            }
-                        }
-                    }
+                    RE::GFxValue args[2];
+                    args[0] = static_cast<double>(i);
+                    args[1] = 0.0;
+                    targetList.Invoke("onItemSelect", nullptr, args, 1);
+                    targetList.Invoke("onItemPress", nullptr, args, 2);
 
                     const char* name = entry.ingredient->object->GetName();
-                    std::string itemName = (name && name[0] != '\0')
-                        ? std::string(name)
-                        : std::format("0x{:08X}", targetId);
-
-                    result.selectedIngredients.push_back(itemName);
+                    result.selectedIngredients.push_back((name && name[0] != '\0') ? name : std::format("0x{:08X}", addId));
                     break;
                 }
             }
-
             if (!found) {
-                result.missingIngredients.push_back(std::format("0x{:08X}", targetId));
+                result.missingIngredients.push_back(std::format("0x{:08X}", addId));
             }
         }
 
-        // 3. Trigger UI Refresh
+        // 6. Refresh UI once at the end
+        targetList.Invoke("UpdateList");
         RefreshAlchemyUI(alchemyMenu);
 
-        // 4. Check selection outcome
-        if (result.selectedIngredients.empty()) {
-            result.success = false;
-            result.message = "None of the requested ingredients are in player inventory";
-            return result;
+        // Include retained items in the result
+        for (auto targetId : targetFormIds) {
+            if (std::find(toAdd.begin(), toAdd.end(), targetId) == toAdd.end()) {
+                auto it = currentSelectedMap.find(targetId);
+                if (it != currentSelectedMap.end() && it->second < alchemyMenu->ingredientEntries.size()) {
+                    auto& entry = alchemyMenu->ingredientEntries[it->second];
+                    const char* name = (entry.ingredient && entry.ingredient->object) ? entry.ingredient->object->GetName() : nullptr;
+                    result.selectedIngredients.push_back(name ? name : std::format("0x{:08X}", targetId));
+                }
+            }
         }
 
-        // 5. Perform auto-craft if requested and all ingredients were found
+        // 7. Auto-craft if requested
         if (autoCraft && result.missingIngredients.empty() && result.selectedIngredients.size() >= 2) {
-            alchemyMenu->ProcessUserEvent(&userEvents->xButton);
-            result.crafted = true;
-            result.message = std::format("Crafted potion with {} ingredients", result.selectedIngredients.size());
+            auto* userEvents = RE::UserEvents::GetSingleton();
+            if (userEvents) {
+                alchemyMenu->ProcessUserEvent(&userEvents->xButton);
+                result.crafted = true;
+                result.message = std::format("Crafted potion with {} ingredients", result.selectedIngredients.size());
+            }
         } else {
             result.message = std::format("Selected {} (active slots: {})",
                 result.selectedIngredients.size(), alchemyMenu->selectedIndexes.size());
-            if (!result.missingIngredients.empty()) {
-                result.message += std::format(" ({} missing)", result.missingIngredients.size());
-            }
         }
 
         result.success = true;
@@ -498,7 +434,7 @@ namespace SkyPotion::Game {
 
                 std::thread([session]() {
                     while (session->active.load()) {
-                        std::this_thread::sleep_for(std::chrono::milliseconds(150));
+                        std::this_thread::sleep_for(std::chrono::milliseconds(250));
 
                         if (!session->active.load()) {
                             break;
@@ -598,7 +534,7 @@ namespace SkyPotion::Game {
                             promise->set_value(true);
                         });
 
-                        if (future.wait_for(std::chrono::milliseconds(500)) == std::future_status::ready) {
+                        if (future.wait_for(std::chrono::seconds(2)) == std::future_status::ready) {
                             if (!future.get()) {
                                 break;
                             }
