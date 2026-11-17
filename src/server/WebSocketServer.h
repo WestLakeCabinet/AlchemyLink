@@ -19,6 +19,8 @@ namespace SkyPotion::Server {
 
         void Broadcast(const nlohmann::json& message);
         void BroadcastFullSnapshot();
+        void BroadcastGameData();
+        void BroadcastGameSessionLoaded();
 
     private:
         WebSocketServer();

@@ -91,7 +91,7 @@ namespace SkyPotion::Server {
                 connectionState ? connectionState->getId() : "unknown", 
                 msg->openInfo.uri);
 
-            BroadcastFullSnapshot();
+            BroadcastGameSessionLoaded();
             return;
         }
 
@@ -268,7 +268,7 @@ namespace SkyPotion::Server {
         }
         // 8. Alchemy Workbench Status Query
         else if (id == "alchemy.status" || id == "alchemy.is_open") {
-            respFields["isOpen"] = Game::AlchemyController::IsAlchemyMenuOpen();
+            respFields["isOpen"] = Game::AlchemyController::IsAlchemyItemListReady();
         }
         else {
             respFields["warning"] = "Unrecognized query id";
@@ -318,7 +318,7 @@ namespace SkyPotion::Server {
             };
         }
         else if (action == "alchemy.status") {
-            bool isOpen = Game::AlchemyController::IsAlchemyMenuOpen();
+            bool isOpen = Game::AlchemyController::IsAlchemyItemListReady();
             return {
                 { "type", "command_result" },
                 { "action", action },
@@ -395,7 +395,7 @@ namespace SkyPotion::Server {
                     });
 
                     // 6. alchemy.menu event
-                    bool isOpen = Game::AlchemyController::IsAlchemyMenuOpen();
+                    bool isOpen = Game::AlchemyController::IsAlchemyItemListReady();
                     Broadcast({
                         { "type", "event" },
                         { "event", "alchemy.menu" },
@@ -408,6 +408,126 @@ namespace SkyPotion::Server {
                     SKSE::log::error("Error in BroadcastFullSnapshot: {}", e.what());
                 } catch (...) {
                     SKSE::log::error("Unknown exception in BroadcastFullSnapshot");
+                }
+            });
+        }
+    }
+
+    void WebSocketServer::BroadcastGameData() {
+        auto taskInterface = SKSE::GetTaskInterface();
+        if (taskInterface) {
+            taskInterface->AddTask([this]() {
+                try {
+                    if (!_running.load() || !_server) return;
+
+                    int64_t nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::system_clock::now().time_since_epoch()).count();
+
+                    auto gameData = Game::AlchemyDataExtractor::GetAlchemyGameDataJson();
+                    Broadcast({
+                        { "type", "data" },
+                        { "id", "gamedata.alchemy" },
+                        { "fields", std::move(gameData) },
+                        { "ts", nowMs }
+                    });
+
+                    SKSE::log::info("BroadcastGameData: broadcasted gamedata.alchemy to clients");
+                } catch (const std::exception& e) {
+                    SKSE::log::error("Error in BroadcastGameData: {}", e.what());
+                } catch (...) {
+                    SKSE::log::error("Unknown exception in BroadcastGameData");
+                }
+            });
+        }
+    }
+
+    void WebSocketServer::BroadcastGameSessionLoaded() {
+        auto taskInterface = SKSE::GetTaskInterface();
+        if (taskInterface) {
+            taskInterface->AddTask([this]() {
+                try {
+                    if (!_running.load() || !_server) return;
+
+                    int64_t nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::system_clock::now().time_since_epoch()).count();
+
+                    // 1. game.loaded event
+                    Broadcast({
+                        { "type", "event" },
+                        { "event", "game.loaded" },
+                        { "ts", nowMs }
+                    });
+
+                    // 2. gamedata.alchemy (Master BaseEffects + Playable Ingredients)
+                    auto gameData = Game::AlchemyDataExtractor::GetAlchemyGameDataJson();
+                    Broadcast({
+                        { "type", "data" },
+                        { "id", "gamedata.alchemy" },
+                        { "fields", std::move(gameData) },
+                        { "ts", nowMs }
+                    });
+
+                    // 3. character.stats (includes name, level, language)
+                    Broadcast({
+                        { "type", "data" },
+                        { "id", "character.stats" },
+                        { "fields", Game::StatExtractor::GetPlayerStatsJson() },
+                        { "ts", nowMs }
+                    });
+
+                    // 4. skypotion.alchemy (skill level)
+                    Broadcast({
+                        { "type", "data" },
+                        { "id", "skypotion.alchemy" },
+                        { "fields", Game::StatExtractor::GetAlchemyStatsJson() },
+                        { "ts", nowMs }
+                    });
+
+                    // 5. player.perks
+                    Broadcast({
+                        { "type", "data" },
+                        { "id", "player.perks" },
+                        { "fields", {
+                            { "perks", Game::PerkExtractor::GetAllPerksJson() },
+                            { "alchemyPerks", Game::PerkExtractor::GetAlchemyPerksSummary() }
+                        }},
+                        { "ts", nowMs }
+                    });
+
+                    // 6. inventory.ingredients
+                    Broadcast({
+                        { "type", "data" },
+                        { "id", "inventory.ingredients" },
+                        { "fields", {
+                            { "items", Game::InventoryExtractor::GetIngredientsJson() }
+                        }},
+                        { "ts", nowMs }
+                    });
+
+                    // 7. inventory.apparel
+                    Broadcast({
+                        { "type", "data" },
+                        { "id", "inventory.apparel" },
+                        { "fields", {
+                            { "items", Game::InventoryExtractor::GetApparelJson() }
+                        }},
+                        { "ts", nowMs }
+                    });
+
+                    // 8. alchemy.menu event
+                    bool isOpen = Game::AlchemyController::IsAlchemyItemListReady();
+                    Broadcast({
+                        { "type", "event" },
+                        { "event", "alchemy.menu" },
+                        { "isOpen", isOpen },
+                        { "ts", nowMs }
+                    });
+
+                    SKSE::log::info("BroadcastGameSessionLoaded: broadcasted master game data and player snapshot to clients (alchemy isOpen={})", isOpen);
+                } catch (const std::exception& e) {
+                    SKSE::log::error("Error in BroadcastGameSessionLoaded: {}", e.what());
+                } catch (...) {
+                    SKSE::log::error("Unknown exception in BroadcastGameSessionLoaded");
                 }
             });
         }

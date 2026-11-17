@@ -24,14 +24,20 @@ namespace SkyPotion::Game {
 
     class AlchemyController {
     public:
-        // Checks if the Alchemy workbench menu is currently open
+// Checks if the Alchemy workbench menu is currently open
         static bool IsAlchemyMenuOpen();
+
+        // Checks if the Alchemy menu AND its Flash item list are fully populated and visible
+        static bool IsAlchemyItemListReady();
 
         // Retrieves the active AlchemyMenu pointer, or nullptr if not open
         static RE::CraftingSubMenus::AlchemyMenu* GetAlchemyMenu();
 
         // Clears any currently selected ingredients from the alchemy slots
         static bool ClearSelectedIngredients();
+
+        // Gets the FormIDs of all currently selected ingredients in the alchemy slots
+        static std::vector<RE::FormID> GetSelectedIngredientFormIDs();
 
         // Selects ingredients by string FormIDs (hex "0x..." or decimal)
         static AlchemySelectResult SelectIngredients(

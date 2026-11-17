@@ -48,7 +48,8 @@ namespace {
 
             case SKSE::MessagingInterface::kPostLoadGame:
             case SKSE::MessagingInterface::kNewGame:
-                SKSE::log::info("Game session started or loaded.");
+                SKSE::log::info("Game session started or loaded. Broadcasting master game data and player snapshot...");
+                SkyPotion::Server::WebSocketServer::GetSingleton().BroadcastGameSessionLoaded();
                 break;
 
             default:

@@ -1,6 +1,9 @@
 #include "game/AlchemyController.h"
 #include "server/WebSocketServer.h"
 #include <chrono>
+#include <future>
+#include <thread>
+#include <atomic>
 
 namespace SkyPotion::Game {
 
@@ -43,38 +46,142 @@ namespace SkyPotion::Game {
         return list;
     }
 
+    bool AlchemyController::IsAlchemyItemListReady() {
+        auto* alchemyMenu = GetAlchemyMenu();
+        if (!alchemyMenu) {
+            return false;
+        }
+
+        // 1. C++ 엔진 레벨에서 재료 배열이 채워졌는지 확인
+        const size_t cppCount = alchemyMenu->ingredientEntries.size();
+        if (cppCount == 0) {
+            return false;
+        }
+
+        auto* ui = RE::UI::GetSingleton();
+        auto craftingMenu = (ui && ui->IsMenuOpen(RE::CraftingMenu::MENU_NAME))
+            ? ui->GetMenu<RE::CraftingMenu>(RE::CraftingMenu::MENU_NAME)
+            : nullptr;
+
+        auto* movie = craftingMenu ? craftingMenu->uiMovie.get() : (alchemyMenu->view ? alchemyMenu->view.get() : nullptr);
+
+        // 2. Scaleform craftingMenu / inventoryLists의 bInCategories 확인 (바닐라 및 SkyUI 공통 플래그)
+        // bInCategories가 true이면 아직 좌측 카테고리(모두 / 물약 / 독) 선택 상태임!
+        RE::GFxValue inCategoriesVal;
+        if (alchemyMenu->craftingMenu.IsObject()) {
+            if (alchemyMenu->craftingMenu.GetMember("bInCategories", &inCategoriesVal) && inCategoriesVal.IsBool()) {
+                if (inCategoriesVal.GetBool()) {
+                    return false;
+                }
+            }
+        }
+
+        if (movie) {
+            if ((movie->GetVariable(&inCategoriesVal, "_root.Menu.bInCategories") ||
+                 movie->GetVariable(&inCategoriesVal, "_root.CraftingMenu.bInCategories") ||
+                 movie->GetVariable(&inCategoriesVal, "_root.Menu_mc.bInCategories") ||
+                 movie->GetVariable(&inCategoriesVal, "_root.Menu_mc.inventoryLists.bInCategories") ||
+                 movie->GetVariable(&inCategoriesVal, "_root.InventoryLists.bInCategories") ||
+                 movie->GetVariable(&inCategoriesVal, "_root.Menu.InventoryLists.bInCategories")) &&
+                inCategoriesVal.IsBool() && inCategoriesVal.GetBool()) {
+                return false;
+            }
+
+            // SkyUI inventoryLists._currentState 확인 (1 = SHOW_CATEGORIES, 2 = SHOW_PANEL)
+            RE::GFxValue panelState;
+            if (movie->GetVariable(&panelState, "_root.Menu_mc.inventoryLists._currentState") ||
+                movie->GetVariable(&panelState, "_root.Menu.InventoryLists._currentState") ||
+                movie->GetVariable(&panelState, "_root.CraftingMenu.InventoryLists._currentState")) {
+                if (panelState.IsNumber() && static_cast<int>(panelState.GetNumber()) < 2) {
+                    return false;
+                }
+            }
+
+            // SkyUI categoryList 포커스 여부
+            RE::GFxValue catFocus;
+            if ((movie->GetVariable(&catFocus, "_root.Menu_mc.inventoryLists.categoryList.bHasFocus") ||
+                 movie->GetVariable(&catFocus, "_root.Menu.InventoryLists.categoryList.bHasFocus") ||
+                 movie->GetVariable(&catFocus, "_root.CraftingMenu.InventoryLists.categoryList.bHasFocus")) &&
+                catFocus.IsBool() && catFocus.GetBool()) {
+                return false;
+            }
+        }
+
+        // 3. categories 리스트가 포커스를 가지고 있는지 확인
+        if (alchemyMenu->categories.IsObject()) {
+            RE::GFxValue catFocus;
+            if (alchemyMenu->categories.GetMember("bHasFocus", &catFocus) && catFocus.IsBool() && catFocus.GetBool()) {
+                return false;
+            }
+        }
+
+        // 4. itemList 객체 상태 및 포커스 검사
+        RE::GFxValue targetList = GetTargetItemList(alchemyMenu, craftingMenu.get());
+        if (!targetList.IsObject()) {
+            return false;
+        }
+
+        // SkyUI에서는 카테고리 단계일 때 itemList의 disableInput 또는 disableSelection이 true로 설정됨
+        RE::GFxValue disableVal;
+        if (targetList.GetMember("disableInput", &disableVal) && disableVal.IsBool() && disableVal.GetBool()) {
+            return false;
+        }
+        if (targetList.GetMember("disableSelection", &disableVal) && disableVal.IsBool() && disableVal.GetBool()) {
+            return false;
+        }
+
+        // itemList의 bHasFocus가 명시적인 bool이고 false인 경우 (카테고리 뷰 포커스)
+        RE::GFxValue itemFocus;
+        if (targetList.GetMember("bHasFocus", &itemFocus) && itemFocus.IsBool() && !itemFocus.GetBool()) {
+            return false;
+        }
+
+        // itemList가 숨겨져 있는지(_visible == false)
+        RE::GFxValue visibleVal;
+        if (targetList.GetMember("_visible", &visibleVal) && visibleVal.IsBool() && !visibleVal.GetBool()) {
+            return false;
+        }
+
+        // itemList 알파값이 0인지
+        RE::GFxValue alphaVal;
+        if (targetList.GetMember("_alpha", &alphaVal) && alphaVal.IsNumber() && alphaVal.GetNumber() <= 0.0) {
+            return false;
+        }
+
+        // entryList 또는 _dataProvider 배열 확인
+        uint32_t flashCount = 0;
+        RE::GFxValue listArray;
+        if (targetList.GetMember("entryList", &listArray) && listArray.IsArray()) {
+            flashCount = listArray.GetArraySize();
+        } else if (targetList.GetMember("_dataProvider", &listArray) && listArray.IsArray()) {
+            flashCount = listArray.GetArraySize();
+        } else if (targetList.GetMember("dataProvider", &listArray) && listArray.IsArray()) {
+            flashCount = listArray.GetArraySize();
+        } else {
+            return false;
+        }
+
+        if (flashCount == 0) {
+            return false;
+        }
+
+        return true;
+    }
+
     void RefreshAlchemyUI(RE::CraftingSubMenus::AlchemyMenu* alchemyMenu) {
         if (!alchemyMenu) return;
 
-        SKSE::log::info("RefreshAlchemyUI: view={}, craftingMenu.isObj={}, itemList.isObj={}",
-            (void*)alchemyMenu->view.get(),
-            alchemyMenu->craftingMenu.IsObject(),
-            alchemyMenu->itemList.IsObject());
-
-        if (alchemyMenu->craftingMenu.IsObject()) {
-            alchemyMenu->craftingMenu.Invoke("UpdateCategories");
-            alchemyMenu->craftingMenu.Invoke("UpdateItemList");
-        }
-
         if (alchemyMenu->itemList.IsObject()) {
-            alchemyMenu->itemList.Invoke("Update");
             alchemyMenu->itemList.Invoke("UpdateList");
-            alchemyMenu->itemList.Invoke("InvalidateData");
-        }
-
-        if (alchemyMenu->view) {
-            alchemyMenu->view->Invoke("_root.CraftingMenu.UpdateCategories", nullptr, nullptr, 0);
-            alchemyMenu->view->Invoke("_root.CraftingMenu.UpdateItemList", nullptr, nullptr, 0);
+        } else if (alchemyMenu->view) {
             alchemyMenu->view->Invoke("_root.CraftingMenu.InventoryLists.itemList.UpdateList", nullptr, nullptr, 0);
-            alchemyMenu->view->Invoke("_root.CraftingMenu.InventoryLists.itemList.InvalidateData", nullptr, nullptr, 0);
             alchemyMenu->view->Invoke("_root.Menu_mc.inventoryLists.itemList.UpdateList", nullptr, nullptr, 0);
-            alchemyMenu->view->Invoke("_root.Menu_mc.inventoryLists.itemList.InvalidateData", nullptr, nullptr, 0);
         }
     }
 
     bool AlchemyController::ClearSelectedIngredients() {
         auto* alchemyMenu = GetAlchemyMenu();
-        if (!alchemyMenu) {
+        if (!alchemyMenu || !IsAlchemyItemListReady()) {
             return false;
         }
 
@@ -87,36 +194,30 @@ namespace SkyPotion::Game {
         SKSE::log::info("ClearSelectedIngredients: targetList.isObj={}, selectedIndexes.size={}",
             targetList.IsObject(), alchemyMenu->selectedIndexes.size());
 
-        // 1. Untoggle any selected items in Flash UI
+        // 1. Untoggle any selected items in Flash UI using their indices
         if (targetList.IsObject()) {
-            RE::GFxValue entryList;
-            if (targetList.GetMember("entryList", &entryList) && entryList.IsArray()) {
-                uint32_t count = entryList.GetArraySize();
-                for (uint32_t j = 0; j < count; ++j) {
-                    RE::GFxValue entryObj;
-                    entryList.GetElement(j, &entryObj);
-                    if (entryObj.IsObject()) {
-                        RE::GFxValue isSel;
-                        bool sel = false;
-                        if (entryObj.GetMember("selected", &isSel) && isSel.IsBool()) {
-                            sel = isSel.GetBool();
-                        } else if (entryObj.GetMember("isSelected", &isSel) && isSel.IsBool()) {
-                            sel = isSel.GetBool();
-                        }
-
-                        if (sel) {
-                            SKSE::log::info("ClearSelectedIngredients: Untoggling Flash entry at index {}", j);
-                            RE::GFxValue indexVal(static_cast<double>(j));
-                            targetList.SetMember("selectedIndex", indexVal);
-
-                            RE::GFxValue args[2];
-                            args[0] = static_cast<double>(j);
-                            args[1] = 0.0;
-                            targetList.Invoke("onItemSelect", nullptr, args, 1);
-                            targetList.Invoke("onItemPress", nullptr, args, 2);
-                        }
+            std::vector<std::uint32_t> toUntoggle;
+            for (std::uint32_t idx : alchemyMenu->selectedIndexes) {
+                toUntoggle.push_back(idx);
+            }
+            for (std::uint32_t i = 0; i < alchemyMenu->ingredientEntries.size(); ++i) {
+                if (alchemyMenu->ingredientEntries[i].isSelected) {
+                    if (std::find(toUntoggle.begin(), toUntoggle.end(), i) == toUntoggle.end()) {
+                        toUntoggle.push_back(i);
                     }
                 }
+            }
+
+            for (std::uint32_t idx : toUntoggle) {
+                SKSE::log::info("ClearSelectedIngredients: Untoggling Flash entry at index {}", idx);
+                RE::GFxValue indexVal(static_cast<double>(idx));
+                targetList.SetMember("selectedIndex", indexVal);
+
+                RE::GFxValue args[2];
+                args[0] = static_cast<double>(idx);
+                args[1] = 0.0;
+                targetList.Invoke("onItemSelect", nullptr, args, 1);
+                targetList.Invoke("onItemPress", nullptr, args, 2);
             }
             targetList.Invoke("UpdateList");
         }
@@ -150,6 +251,24 @@ namespace SkyPotion::Game {
         return true;
     }
 
+    std::vector<RE::FormID> AlchemyController::GetSelectedIngredientFormIDs() {
+        std::vector<RE::FormID> result;
+        auto* alchemyMenu = GetAlchemyMenu();
+        if (!alchemyMenu) {
+            return result;
+        }
+
+        for (std::uint32_t idx : alchemyMenu->selectedIndexes) {
+            if (idx < alchemyMenu->ingredientEntries.size()) {
+                auto& entry = alchemyMenu->ingredientEntries[idx];
+                if (entry.ingredient && entry.ingredient->object) {
+                    result.push_back(entry.ingredient->object->GetFormID());
+                }
+            }
+        }
+        return result;
+    }
+
     AlchemySelectResult AlchemyController::SelectIngredients(
         const std::vector<std::string>& formIdStrings,
         bool autoCraft
@@ -159,7 +278,9 @@ namespace SkyPotion::Game {
 
         for (const auto& str : formIdStrings) {
             try {
-                RE::FormID id = static_cast<RE::FormID>(std::stoul(str, nullptr, 0));
+                // Support both 32-bit and 64-bit sign-extended hex formats safely
+                uint64_t val = std::stoull(str, nullptr, 0);
+                RE::FormID id = static_cast<RE::FormID>(val & 0xFFFFFFFFULL);
                 formIds.push_back(id);
             } catch (const std::exception& e) {
                 SKSE::log::warn("Invalid FormID string '{}': {}", str, e.what());
@@ -179,6 +300,12 @@ namespace SkyPotion::Game {
         if (!alchemyMenu) {
             result.success = false;
             result.message = "Alchemy workbench is not open";
+            return result;
+        }
+
+        if (!IsAlchemyItemListReady()) {
+            result.success = false;
+            result.message = "Alchemy item list is not active (still in categories or transitioning)";
             return result;
         }
 
@@ -261,24 +388,26 @@ namespace SkyPotion::Game {
                         targetList.Invoke("UpdateList");
                     }
 
-                    // (B) Also trigger via C++ engine UserEvents
-                    alchemyMenu->currentIngredientIdx = i;
-                    uint8_t wasSelected = entry.isSelected;
-                    size_t countBefore = alchemyMenu->selectedIndexes.size();
+                    // (B) Also trigger via C++ engine UserEvents if Flash onItemPress did not toggle it
+                    if (!entry.isSelected) {
+                        alchemyMenu->currentIngredientIdx = i;
+                        uint8_t wasSelected = entry.isSelected;
+                        size_t countBefore = alchemyMenu->selectedIndexes.size();
 
-                    bool retAccept = alchemyMenu->ProcessUserEvent(&userEvents->accept);
-                    SKSE::log::info("Target 0x{:08X} (idx {}): ProcessUserEvent(&accept) ret={}, wasSel={}, isSel={}, count {} -> {}",
-                        targetId, i, retAccept, wasSelected, entry.isSelected, countBefore, alchemyMenu->selectedIndexes.size());
+                        bool retAccept = alchemyMenu->ProcessUserEvent(&userEvents->accept);
+                        SKSE::log::info("Target 0x{:08X} (idx {}): ProcessUserEvent(&accept) ret={}, wasSel={}, isSel={}, count {} -> {}",
+                            targetId, i, retAccept, wasSelected, entry.isSelected, countBefore, alchemyMenu->selectedIndexes.size());
 
-                    if (alchemyMenu->selectedIndexes.size() == countBefore && !entry.isSelected) {
-                        RE::BSFixedString acceptStr("Accept");
-                        bool retStr = alchemyMenu->ProcessUserEvent(&acceptStr);
-                        SKSE::log::info("  Trying BSFixedString('Accept'): ret={}, count={}", retStr, alchemyMenu->selectedIndexes.size());
+                        if (alchemyMenu->selectedIndexes.size() == countBefore && !entry.isSelected) {
+                            RE::BSFixedString acceptStr("Accept");
+                            bool retStr = alchemyMenu->ProcessUserEvent(&acceptStr);
+                            SKSE::log::info("  Trying BSFixedString('Accept'): ret={}, count={}", retStr, alchemyMenu->selectedIndexes.size());
 
-                        if (alchemyMenu->selectedIndexes.size() == countBefore) {
-                            RE::BSFixedString activateStr("Activate");
-                            bool retAct = alchemyMenu->ProcessUserEvent(&activateStr);
-                            SKSE::log::info("  Trying BSFixedString('Activate'): ret={}, count={}", retAct, alchemyMenu->selectedIndexes.size());
+                            if (alchemyMenu->selectedIndexes.size() == countBefore) {
+                                RE::BSFixedString activateStr("Activate");
+                                bool retAct = alchemyMenu->ProcessUserEvent(&activateStr);
+                                SKSE::log::info("  Trying BSFixedString('Activate'): ret={}, count={}", retAct, alchemyMenu->selectedIndexes.size());
+                            }
                         }
                     }
 
@@ -337,6 +466,16 @@ namespace SkyPotion::Game {
         }
     }
 
+    struct MonitorSession {
+        std::atomic<bool> active{ true };
+        int checkCount{ 0 };
+        bool wasListReady{ false };
+        std::vector<RE::FormID> lastSelected;
+    };
+
+    static std::shared_ptr<MonitorSession> s_monitorSession;
+    static std::mutex s_sessionMutex;
+
     RE::BSEventNotifyControl MenuOpenCloseHandler::ProcessEvent(
         const RE::MenuOpenCloseEvent* a_event,
         RE::BSTEventSource<RE::MenuOpenCloseEvent>*) {
@@ -347,41 +486,145 @@ namespace SkyPotion::Game {
             SKSE::log::info("MenuOpenCloseEvent: CraftingMenu opening={}", opening);
 
             if (opening) {
-                auto taskInterface = SKSE::GetTaskInterface();
-                if (taskInterface) {
-                    struct SubmenuCheckTask {
-                        int retriesRemaining{ 15 };
+                std::shared_ptr<MonitorSession> session;
+                {
+                    std::lock_guard<std::mutex> lock(s_sessionMutex);
+                    if (s_monitorSession) {
+                        s_monitorSession->active.store(false);
+                    }
+                    s_monitorSession = std::make_shared<MonitorSession>();
+                    session = s_monitorSession;
+                }
 
-                        void operator()() {
-                            auto* alchemyMenu = AlchemyController::GetAlchemyMenu();
-                            if (alchemyMenu) {
-                                SKSE::log::info("CraftingMenu: AlchemyMenu confirmed via skyrim_cast! (retries left={})", retriesRemaining);
-                                Server::WebSocketServer::GetSingleton().BroadcastFullSnapshot();
+                std::thread([session]() {
+                    while (session->active.load()) {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(150));
+
+                        if (!session->active.load()) {
+                            break;
+                        }
+
+                        auto* taskInterface = SKSE::GetTaskInterface();
+                        if (!taskInterface) {
+                            break;
+                        }
+
+                        auto promise = std::make_shared<std::promise<bool>>();
+                        auto future = promise->get_future();
+
+                        taskInterface->AddTask([session, promise]() {
+                            if (!session->active.load()) {
+                                promise->set_value(false);
                                 return;
                             }
 
-                            // If CraftingMenu is still open, retry on the next frame (up to 15 frames, ~250ms)
+                            ++session->checkCount;
+
                             auto* ui = RE::UI::GetSingleton();
-                            if (ui && ui->IsMenuOpen(RE::CraftingMenu::MENU_NAME) && --retriesRemaining > 0) {
-                                auto taskInterface = SKSE::GetTaskInterface();
-                                if (taskInterface) {
-                                    taskInterface->AddTask(*this);
+                            if (!ui || !ui->IsMenuOpen(RE::CraftingMenu::MENU_NAME)) {
+                                promise->set_value(false);
+                                return;
+                            }
+
+                            auto* alchemyMenu = AlchemyController::GetAlchemyMenu();
+                            if (!alchemyMenu) {
+                                if (session->checkCount >= 10) {
+                                    SKSE::log::info("CraftingMenu: Active submenu is not AlchemyMenu. Stopping monitor.");
+                                    promise->set_value(false);
+                                } else {
+                                    promise->set_value(true);
                                 }
-                            } else {
-                                SKSE::log::info("CraftingMenu: Active submenu is not AlchemyMenu (e.g. forge, enchanting, cooking).");
+                                return;
+                            }
+
+                            bool isReady = AlchemyController::IsAlchemyItemListReady();
+
+                            int64_t nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                std::chrono::system_clock::now().time_since_epoch()).count();
+
+                            if (isReady && !session->wasListReady) {
+                                session->wasListReady = true;
+                                session->lastSelected = AlchemyController::GetSelectedIngredientFormIDs();
+                                SKSE::log::info("CraftingMenu: Alchemy ItemList OPENED! (cppEntries={}, check={})",
+                                    alchemyMenu->ingredientEntries.size(), session->checkCount);
+
+                                std::vector<std::string> hexSelected;
+                                for (auto id : session->lastSelected) {
+                                    hexSelected.push_back(std::format("0x{:08X}", id));
+                                }
+
+                                nlohmann::json evt = {
+                                    { "type", "event" },
+                                    { "event", "alchemy.menu" },
+                                    { "isOpen", true },
+                                    { "selectedIngredients", hexSelected },
+                                    { "ts", nowMs }
+                                };
+                                Server::WebSocketServer::GetSingleton().Broadcast(evt);
+                            } else if (!isReady && session->wasListReady) {
+                                session->wasListReady = false;
+                                session->lastSelected.clear();
+                                SKSE::log::info("CraftingMenu: Alchemy ItemList CLOSED (back to categories).");
+
+                                nlohmann::json evt = {
+                                    { "type", "event" },
+                                    { "event", "alchemy.menu" },
+                                    { "isOpen", false },
+                                    { "selectedIngredients", nlohmann::json::array() },
+                                    { "ts", nowMs }
+                                };
+                                Server::WebSocketServer::GetSingleton().Broadcast(evt);
+                            } else if (isReady && session->wasListReady) {
+                                auto currentSelected = AlchemyController::GetSelectedIngredientFormIDs();
+                                if (currentSelected != session->lastSelected) {
+                                    session->lastSelected = currentSelected;
+
+                                    std::vector<std::string> hexSelected;
+                                    for (auto id : session->lastSelected) {
+                                        hexSelected.push_back(std::format("0x{:08X}", id));
+                                    }
+
+                                    SKSE::log::info("CraftingMenu: Alchemy selection changed in Skyrim (count={})", hexSelected.size());
+                                    nlohmann::json evt = {
+                                        { "type", "event" },
+                                        { "event", "alchemy.selection" },
+                                        { "selectedIngredients", hexSelected },
+                                        { "ts", nowMs }
+                                    };
+                                    Server::WebSocketServer::GetSingleton().Broadcast(evt);
+                                }
+                            }
+
+                            promise->set_value(true);
+                        });
+
+                        if (future.wait_for(std::chrono::milliseconds(500)) == std::future_status::ready) {
+                            if (!future.get()) {
+                                break;
                             }
                         }
-                    };
+                    }
 
-                    taskInterface->AddTask(SubmenuCheckTask{});
-                }
+                    session->active.store(false);
+                }).detach();
+
             } else {
+                {
+                    std::lock_guard<std::mutex> lock(s_sessionMutex);
+                    if (s_monitorSession) {
+                        s_monitorSession->active.store(false);
+                        s_monitorSession.reset();
+                    }
+                }
+
+                int64_t nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::system_clock::now().time_since_epoch()).count();
                 nlohmann::json evt = {
                     { "type", "event" },
                     { "event", "alchemy.menu" },
                     { "isOpen", false },
-                    { "ts", std::chrono::duration_cast<std::chrono::milliseconds>(
-                        std::chrono::system_clock::now().time_since_epoch()).count() }
+                    { "selectedIngredients", nlohmann::json::array() },
+                    { "ts", nowMs }
                 };
                 Server::WebSocketServer::GetSingleton().Broadcast(evt);
             }
