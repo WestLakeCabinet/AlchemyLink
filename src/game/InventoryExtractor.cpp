@@ -30,24 +30,19 @@ namespace SkyPotion::Game {
                 auto* effectItem = effects[i];
                 if (!effectItem || !effectItem->baseEffect) continue;
 
-                const char* effectName = effectItem->baseEffect->GetName();
                 // Check if player has discovered this effect (bit flag in gamedata)
                 bool isKnown = (ingredient->gamedata.knownEffectFlags & (1 << i)) != 0;
 
                 effectsJson.push_back({
-                    { "name", effectName ? effectName : "" },
+                    { "formId", std::format("0x{:08X}", effectItem->baseEffect->GetFormID()) },
                     { "known", isKnown }
                 });
             }
 
             itemsArray.push_back({
-                { "categoryType", "Ingredient" },
                 { "formId", std::format("0x{:08X}", ingredient->GetFormID()) },
-                { "name", ingredient->GetName() ? ingredient->GetName() : "" },
                 { "count", count },
-                { "weight", Util::Round3(ingredient->GetWeight()) },
-                { "value", ingredient->GetGoldValue() },
-                { "effects", effectsJson }
+                { "effects", std::move(effectsJson) }
             });
         }
 
@@ -159,23 +154,18 @@ namespace SkyPotion::Game {
                     auto* effectItem = effects[i];
                     if (!effectItem || !effectItem->baseEffect) continue;
 
-                    const char* effectName = effectItem->baseEffect->GetName();
                     bool isKnown = (ingredient->gamedata.knownEffectFlags & (1 << i)) != 0;
 
                     effectsJson.push_back({
-                        { "name", effectName ? effectName : "" },
+                        { "formId", std::format("0x{:08X}", effectItem->baseEffect->GetFormID()) },
                         { "known", isKnown }
                     });
                 }
 
                 ingredientsArray.push_back({
-                    { "categoryType", "Ingredient" },
                     { "formId", std::format("0x{:08X}", ingredient->GetFormID()) },
-                    { "name", ingredient->GetName() ? ingredient->GetName() : "" },
                     { "count", count },
-                    { "weight", Util::Round3(ingredient->GetWeight()) },
-                    { "value", ingredient->GetGoldValue() },
-                    { "effects", effectsJson }
+                    { "effects", std::move(effectsJson) }
                 });
                 continue;
             }
