@@ -1,4 +1,5 @@
 #include "game/InventoryExtractor.h"
+#include "game/StatExtractor.h"
 #include "server/WebSocketServer.h"
 #include <chrono>
 
@@ -14,7 +15,6 @@ nlohmann::json InventoryExtractor::GetIngredientsJson() {
     auto player = RE::PlayerCharacter::GetSingleton();
     if (!player) return itemsArray;
 
-    // 재료(Ingredient)만 필터링하여 인벤토리 맵 복사 비용 최소화
     const auto inventory = player->GetInventory([](RE::TESBoundObject& a_obj) {
         return a_obj.Is(RE::FormType::Ingredient);
     });
@@ -33,7 +33,6 @@ nlohmann::json InventoryExtractor::GetIngredientsJson() {
             auto* effectItem = effects[i];
             if (!effectItem || !effectItem->baseEffect) continue;
 
-            // Check if player has discovered this effect (bit flag in gamedata)
             bool isKnown = (ingredient->gamedata.knownEffectFlags & (1 << i)) != 0;
 
             effectsJson.push_back({
@@ -61,7 +60,8 @@ void InventoryEventHandler::Register() {
     auto* eventHolder = RE::ScriptEventSourceHolder::GetSingleton();
     if (eventHolder) {
         eventHolder->AddEventSink<RE::TESContainerChangedEvent>(this);
-        SKSE::log::info("InventoryEventHandler successfully registered with ScriptEventSourceHolder");
+        eventHolder->AddEventSink<RE::TESEquipEvent>(this);
+        SKSE::log::info("InventoryEventHandler registered for TESContainerChangedEvent & TESEquipEvent");
     } else {
         SKSE::log::warn("ScriptEventSourceHolder unavailable to register InventoryEventHandler");
     }
@@ -82,10 +82,30 @@ RE::BSEventNotifyControl InventoryEventHandler::ProcessEvent(
     }
 
     auto* form = RE::TESForm::LookupByID(a_event->baseObj);
-    if (!form) return RE::BSEventNotifyControl::kContinue;
-
-    if (form->Is(RE::FormType::Ingredient)) {
+    if (form && form->Is(RE::FormType::Ingredient)) {
         RequestInventorySync();
+    }
+
+    return RE::BSEventNotifyControl::kContinue;
+}
+
+RE::BSEventNotifyControl InventoryEventHandler::ProcessEvent(
+    const RE::TESEquipEvent* a_event,
+    RE::BSTEventSource<RE::TESEquipEvent>*) {
+    if (!a_event || !a_event->actor) return RE::BSEventNotifyControl::kContinue;
+
+    if (!Server::WebSocketServer::GetSingleton().HasConnectedClients()) {
+        return RE::BSEventNotifyControl::kContinue;
+    }
+
+    // 플레이어 본인의 장비 변경만 감지 (NPC 장비 변경 무시)
+    if (!a_event->actor->IsPlayerRef()) {
+        return RE::BSEventNotifyControl::kContinue;
+    }
+
+    auto* form = RE::TESForm::LookupByID(a_event->baseObject);
+    if (form && form->Is(RE::FormType::Armor)) {
+        RequestAlchemyStatsSync();
     }
 
     return RE::BSEventNotifyControl::kContinue;
@@ -97,8 +117,7 @@ void InventoryEventHandler::RequestInventorySync() {
     }
 
     if (!_syncPending.exchange(true)) {
-        auto taskInterface = SKSE::GetTaskInterface();
-        if (taskInterface) {
+        if (auto* taskInterface = SKSE::GetTaskInterface()) {
             taskInterface->AddTask([this]() {
                 ExecuteInventorySync();
             });
@@ -115,8 +134,7 @@ void InventoryEventHandler::ExecuteInventorySync() {
     int64_t nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::system_clock::now().time_since_epoch()).count();
 
-    int64_t elapsed = nowMs - _lastSyncTimeMs.load();
-    if (elapsed < 150) {
+    if (nowMs - _lastSyncTimeMs.load() < 150) {
         _syncPending.store(false);
         return;
     }
@@ -135,6 +153,51 @@ void InventoryEventHandler::ExecuteInventorySync() {
     Server::WebSocketServer::GetSingleton().Broadcast(ingPacket);
 
     SKSE::log::info("InventoryEventHandler: Broadcasted updated ingredients");
+}
+
+void InventoryEventHandler::RequestAlchemyStatsSync() {
+    if (!Server::WebSocketServer::GetSingleton().HasConnectedClients()) {
+        return;
+    }
+
+    if (!_alchemySyncPending.exchange(true)) {
+        if (auto* taskInterface = SKSE::GetTaskInterface()) {
+            taskInterface->AddTask([this]() {
+                ExecuteAlchemyStatsSync();
+            });
+        }
+    }
+}
+
+void InventoryEventHandler::ExecuteAlchemyStatsSync() {
+    if (!Server::WebSocketServer::GetSingleton().HasConnectedClients() || !Util::IsGameSessionReady()) {
+        _alchemySyncPending.store(false);
+        return;
+    }
+
+    int64_t nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+
+    // 장비 교체 시 기존 장비 해제 + 새 장비 착용 이벤트가 연속 발생하므로 100ms 디바운스 적용
+    if (nowMs - _lastAlchemySyncTimeMs.load() < 100) {
+        _alchemySyncPending.store(false);
+        return;
+    }
+
+    _alchemySyncPending.store(false);
+    _lastAlchemySyncTimeMs.store(nowMs);
+
+    auto alchemyStats = StatExtractor::GetAlchemyStatsJson();
+
+    nlohmann::json statsPacket = {
+        { "type", "data" },
+        { "id", "skypotion.alchemy" },
+        { "fields", std::move(alchemyStats) },
+        { "ts", nowMs }
+    };
+    Server::WebSocketServer::GetSingleton().Broadcast(statsPacket);
+
+    SKSE::log::info("InventoryEventHandler: Broadcasted updated skypotion.alchemy on equip change");
 }
 
 } // namespace SkyPotion::Game
