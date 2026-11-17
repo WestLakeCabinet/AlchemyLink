@@ -16,6 +16,7 @@ namespace SkyPotion::Server {
         bool Start(uint16_t port = 8765, const std::string& host = "0.0.0.0");
         void Stop();
         bool IsRunning() const;
+        bool HasConnectedClients() const;
 
         void Broadcast(const nlohmann::json& message);
         void BroadcastFullSnapshot();

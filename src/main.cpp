@@ -46,10 +46,14 @@ namespace {
                 SkyPotion::Game::InventoryEventHandler::GetSingleton()->Register();
                 break;
 
+            case SKSE::MessagingInterface::kPreLoadGame:
+                SKSE::log::info("SKSE Message: kPreLoadGame. Halting any active craft.");
+                SkyPotion::Game::AlchemyController::StopCrafting();
+                break;
+
             case SKSE::MessagingInterface::kPostLoadGame:
             case SKSE::MessagingInterface::kNewGame:
-                SKSE::log::info("Game session started or loaded. Broadcasting master game data and player snapshot...");
-                SkyPotion::Server::WebSocketServer::GetSingleton().BroadcastGameSessionLoaded();
+                SKSE::log::info("Game session started or loaded.");
                 break;
 
             default:
@@ -80,4 +84,13 @@ SKSEPluginLoad(const SKSE::LoadInterface* a_skse) {
     }
 
     return true;
+}
+
+extern "C" [[maybe_unused]] __declspec(dllexport) BOOL WINAPI DllMain(HINSTANCE /*hinstDLL*/, DWORD fdwReason, LPVOID /*lpvReserved*/) {
+    if (fdwReason == DLL_PROCESS_DETACH) {
+        SkyPotion::g_isShuttingDown.store(true);
+        SkyPotion::Server::WebSocketServer::GetSingleton().Stop();
+        SkyPotion::Game::AlchemyController::StopCrafting();
+    }
+    return TRUE;
 }

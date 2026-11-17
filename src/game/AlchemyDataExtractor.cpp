@@ -1,9 +1,36 @@
 #include "game/AlchemyDataExtractor.h"
 #include <map>
+#include <mutex>
 
 namespace SkyPotion::Game {
 
-    nlohmann::json AlchemyDataExtractor::GetAlchemyGameDataJson() {
+    static std::shared_ptr<const nlohmann::json> s_cachedGameDataPtr;
+    static std::mutex s_cacheMutex;
+
+    bool AlchemyDataExtractor::HasCache() {
+        std::lock_guard<std::mutex> lock(s_cacheMutex);
+        return s_cachedGameDataPtr != nullptr;
+    }
+
+    std::shared_ptr<const nlohmann::json> AlchemyDataExtractor::GetCachedGameData() {
+        std::lock_guard<std::mutex> lock(s_cacheMutex);
+        return s_cachedGameDataPtr;
+    }
+
+    void AlchemyDataExtractor::ClearCache() {
+        std::lock_guard<std::mutex> lock(s_cacheMutex);
+        s_cachedGameDataPtr.reset();
+        SKSE::log::info("AlchemyDataExtractor: cache cleared");
+    }
+
+    nlohmann::json AlchemyDataExtractor::GetAlchemyGameDataJson(bool forceRefresh) {
+        {
+            std::lock_guard<std::mutex> lock(s_cacheMutex);
+            if (!forceRefresh && s_cachedGameDataPtr) {
+                return *s_cachedGameDataPtr;
+            }
+        }
+
         auto dataHandler = RE::TESDataHandler::GetSingleton();
         if (!dataHandler) {
             SKSE::log::warn("TESDataHandler not available when querying alchemy gamedata");
@@ -94,8 +121,6 @@ namespace SkyPotion::Game {
             bool affectMag = mgef->data.flags.any(RE::EffectSetting::EffectSettingData::Flag::kPowerAffectsMagnitude);
             bool affectDur = mgef->data.flags.any(RE::EffectSetting::EffectSettingData::Flag::kPowerAffectsDuration);
             bool isHostile = mgef->data.flags.any(RE::EffectSetting::EffectSettingData::Flag::kHostile);
-            //bool isDetrimental = mgef->data.flags.any(RE::EffectSetting::EffectSettingData::Flag::kDetrimental);
-            bool isPoison = isHostile;// || isDetrimental;
 
             // Extract Keywords (KWDA)
             std::string keywordsStr;
@@ -129,7 +154,6 @@ namespace SkyPotion::Game {
                 isHarmful = true;
             }
 
-
             bool isPhysician = nameStr.find("Restore") != std::string::npos || nameStr.find("restore") != std::string::npos;
             const char* desc = mgef->magicItemDescription.c_str();
 
@@ -142,10 +166,7 @@ namespace SkyPotion::Game {
                 { "noDur", noDur },
                 { "affectMag", affectMag },
                 { "affectDur", affectDur },
-                //{ "hostile", isHostile },
                 { "isHostile", isHostile },
-                //{ "isDetrimental", isDetrimental },
-                //{ "isPoison", isPoison },
                 { "isBeneficial", isBeneficial },
                 { "isHarmful", isHarmful },
                 { "isPhysician", isPhysician },
@@ -157,12 +178,19 @@ namespace SkyPotion::Game {
         SKSE::log::info("AlchemyDataExtractor: extracted {} ingredients and {} unique alchemy baseEffects",
             ingredientsJson.size(), baseEffectsJson.size());
 
-        return {
+        nlohmann::json result = {
             { "baseEffects", baseEffectsJson },
             { "ingredients", ingredientsJson },
             { "baseEffectCount", baseEffectsJson.size() },
             { "ingredientCount", ingredientsJson.size() }
         };
+
+        {
+            std::lock_guard<std::mutex> lock(s_cacheMutex);
+            s_cachedGameDataPtr = std::make_shared<const nlohmann::json>(result);
+        }
+
+        return result;
     }
 
 }

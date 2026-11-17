@@ -3,6 +3,10 @@
 namespace SkyPotion::Game {
 
     nlohmann::json StatExtractor::GetAlchemyStatsJson() {
+        if (!Util::IsGameSessionReady()) {
+            return nlohmann::json::object();
+        }
+
         auto player = RE::PlayerCharacter::GetSingleton();
         if (!player) return nlohmann::json::object();
 
@@ -19,6 +23,10 @@ namespace SkyPotion::Game {
     }
 
     nlohmann::json StatExtractor::GetPlayerStatsJson() {
+        if (!Util::IsGameSessionReady()) {
+            return nlohmann::json::object();
+        }
+
         auto player = RE::PlayerCharacter::GetSingleton();
         if (!player) return nlohmann::json::object();
 

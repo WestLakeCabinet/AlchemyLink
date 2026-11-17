@@ -41,12 +41,43 @@ namespace RE::CraftingSubMenus {
 
 #include <nlohmann/json.hpp>
 
+namespace SkyPotion {
+    inline std::atomic<bool> g_isShuttingDown{ false };
+}
+
 namespace SkyPotion::Util {
     inline double Round3(double value) {
         return std::round(value * 1000.0) / 1000.0;
     }
 
-        inline double Round4(double value) {
+    inline double Round4(double value) {
         return std::round(value * 10000.0) / 10000.0;
+    }
+
+    inline bool IsGameSessionReady() {
+        if (g_isShuttingDown.load()) {
+            return false;
+        }
+
+        auto* ui = RE::UI::GetSingleton();
+        if (!ui) {
+            return false;
+        }
+
+        if (ui->IsMenuOpen(RE::LoadingMenu::MENU_NAME) ||
+            ui->IsMenuOpen(RE::MainMenu::MENU_NAME)) {
+            return false;
+        }
+
+        auto* player = RE::PlayerCharacter::GetSingleton();
+        if (!player) {
+            return false;
+        }
+
+        if (!player->Is3DLoaded() || !player->GetParentCell()) {
+            return false;
+        }
+
+        return true;
     }
 }

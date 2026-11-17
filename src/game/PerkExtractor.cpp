@@ -3,9 +3,13 @@
 namespace SkyPotion::Game {
 
     nlohmann::json PerkExtractor::GetAllPerksJson() {
-        auto player = RE::PlayerCharacter::GetSingleton();
         nlohmann::json perksArray = nlohmann::json::array();
 
+        if (!Util::IsGameSessionReady()) {
+            return perksArray;
+        }
+
+        auto player = RE::PlayerCharacter::GetSingleton();
         if (!player) return perksArray;
 
         const std::vector<std::pair<RE::FormID, const char*>> trackedPerks = {
@@ -41,7 +45,6 @@ namespace SkyPotion::Game {
     }
 
     nlohmann::json PerkExtractor::GetAlchemyPerksSummary() {
-        auto player = RE::PlayerCharacter::GetSingleton();
         nlohmann::json summary = {
             { "alchemist", 0 },
             { "physician", false },
@@ -53,6 +56,11 @@ namespace SkyPotion::Game {
             { "snakeblood", false }
         };
 
+        if (!Util::IsGameSessionReady()) {
+            return summary;
+        }
+
+        auto player = RE::PlayerCharacter::GetSingleton();
         if (!player) return summary;
 
         auto hasPerk = [player](RE::FormID formId) -> bool {
@@ -78,10 +86,11 @@ namespace SkyPotion::Game {
         else if (hasPerk(0x00105F2A)) summary["experimenter"] = 2;
         else if (hasPerk(0x00058218)) summary["experimenter"] = 1;
 
-        // Green Thumb & Snakeblood
+        // Utility perks
         summary["greenThumb"] = hasPerk(0x00105F2E);
         summary["snakeblood"] = hasPerk(0x00105F2C);
 
         return summary;
     }
+
 }

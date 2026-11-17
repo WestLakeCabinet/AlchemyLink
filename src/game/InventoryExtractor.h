@@ -10,6 +10,9 @@ namespace SkyPotion::Game {
 
         // Returns list of apparel items with Fortify Alchemy enchantments and equipped state
         static nlohmann::json GetApparelJson();
+
+        // Combined single-pass extraction of both ingredients and alchemy apparel
+        static std::pair<nlohmann::json, nlohmann::json> GetInventorySnapshotJson();
     };
 
     class InventoryEventHandler : public RE::BSTEventSink<RE::TESContainerChangedEvent> {
@@ -27,5 +30,6 @@ namespace SkyPotion::Game {
     private:
         std::atomic<bool> _syncPending{ false };
         std::atomic<bool> _syncApparel{ false };
+        std::atomic<int64_t> _lastSyncTimeMs{ 0 };
     };
 }
