@@ -317,12 +317,6 @@ namespace SkyPotion::Server {
             (fields.is_object() && fields.value("ingredients", "") == "Actor::Inventory::Ingredients")) {
             respFields["items"] = Game::InventoryExtractor::GetIngredientsJson();
         }
-        // 2. Apparel Query (Fortify Alchemy gear)
-        else if (id == "inventory.apparel" || 
-                 (fields.is_object() && fields.value("items", "") == "Inventory::Items::Apparel") ||
-                 (fields.is_object() && fields.value("apparel", "") == "Actor::Inventory::Apparel")) {
-            respFields["items"] = Game::InventoryExtractor::GetApparelJson();
-        }
         // 3. Alchemy Stats Query
         else if (id == "skypotion.alchemy" || 
                  (fields.is_object() && (fields.contains("alchemy") || fields.contains("alchemyBase")))) {
@@ -336,9 +330,7 @@ namespace SkyPotion::Server {
         }
         // 5. Complete Snapshot Query
         else if (id == "skypotion.all") {
-            auto [ingredients, apparel] = Game::InventoryExtractor::GetInventorySnapshotJson();
-            respFields["ingredients"] = std::move(ingredients);
-            respFields["apparel"] = std::move(apparel);
+            respFields["ingredients"] = Game::InventoryExtractor::GetIngredientsJson();
             respFields["alchemy"] = Game::StatExtractor::GetAlchemyStatsJson();
             respFields["alchemyPerks"] = Game::PerkExtractor::GetAlchemyPerksSummary();
             respFields["stats"] = Game::StatExtractor::GetPlayerStatsJson();
@@ -475,7 +467,7 @@ namespace SkyPotion::Server {
                     auto alchemyStats = Game::StatExtractor::GetAlchemyStatsJson();
                     auto allPerks = Game::PerkExtractor::GetAllPerksJson();
                     auto alchemyPerks = Game::PerkExtractor::GetAlchemyPerksSummary();
-                    auto [ingredients, apparel] = Game::InventoryExtractor::GetInventorySnapshotJson();
+                    auto ingredients = Game::InventoryExtractor::GetIngredientsJson();
                     bool isOpen = Game::AlchemyController::IsAlchemyItemListReady();
 
                     if (isOpen) {
@@ -518,16 +510,6 @@ namespace SkyPotion::Server {
                         { "id", "inventory.ingredients" },
                         { "fields", {
                             { "items", std::move(ingredients) }
-                        }},
-                        { "ts", nowMs }
-                    });
-
-                    // 5. inventory.apparel
-                    Broadcast({
-                        { "type", "data" },
-                        { "id", "inventory.apparel" },
-                        { "fields", {
-                            { "items", std::move(apparel) }
                         }},
                         { "ts", nowMs }
                     });
@@ -600,7 +582,7 @@ namespace SkyPotion::Server {
                     auto alchemyStats = Game::StatExtractor::GetAlchemyStatsJson();
                     auto allPerks = Game::PerkExtractor::GetAllPerksJson();
                     auto alchemyPerks = Game::PerkExtractor::GetAlchemyPerksSummary();
-                    auto [ingredients, apparel] = Game::InventoryExtractor::GetInventorySnapshotJson();
+                    auto ingredients = Game::InventoryExtractor::GetIngredientsJson();
                     bool isOpen = Game::AlchemyController::IsAlchemyItemListReady();
 
                     int64_t nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -654,16 +636,6 @@ namespace SkyPotion::Server {
                         { "id", "inventory.ingredients" },
                         { "fields", {
                             { "items", std::move(ingredients) }
-                        }},
-                        { "ts", nowMs }
-                    });
-
-                    // 7. inventory.apparel
-                    Broadcast({
-                        { "type", "data" },
-                        { "id", "inventory.apparel" },
-                        { "fields", {
-                            { "items", std::move(apparel) }
                         }},
                         { "ts", nowMs }
                     });

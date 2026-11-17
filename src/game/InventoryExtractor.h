@@ -3,16 +3,11 @@
 #include "Pch.h"
 
 namespace SkyPotion::Game {
+
     class InventoryExtractor {
     public:
         // Returns list of ingredients with count and known effects
         static nlohmann::json GetIngredientsJson();
-
-        // Returns list of apparel items with Fortify Alchemy enchantments and equipped state
-        static nlohmann::json GetApparelJson();
-
-        // Combined single-pass extraction of both ingredients and alchemy apparel
-        static std::pair<nlohmann::json, nlohmann::json> GetInventorySnapshotJson();
     };
 
     class InventoryEventHandler : public RE::BSTEventSink<RE::TESContainerChangedEvent> {
@@ -24,12 +19,12 @@ namespace SkyPotion::Game {
             const RE::TESContainerChangedEvent* a_event,
             RE::BSTEventSource<RE::TESContainerChangedEvent>* a_eventSource) override;
 
-        void RequestInventorySync(bool isIngredient, bool isApparel);
+        void RequestInventorySync();
         void ExecuteInventorySync();
 
     private:
         std::atomic<bool> _syncPending{ false };
-        std::atomic<bool> _syncApparel{ false };
         std::atomic<int64_t> _lastSyncTimeMs{ 0 };
     };
-}
+
+} // namespace SkyPotion::Game
