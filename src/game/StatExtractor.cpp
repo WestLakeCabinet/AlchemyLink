@@ -4,7 +4,7 @@ namespace SkyPotion::Game {
 
 namespace {
     double GetTotalFortifyAlchemy(RE::PlayerCharacter* player) {
-        if (!player) return 0.0;
+        if (!player || !Util::IsGameSessionReady()) return 0.0;
 
         double totalBonus = 0.0;
         auto* magicTarget = player->AsMagicTarget();
@@ -14,7 +14,7 @@ namespace {
         if (!activeEffects) return 0.0;
 
         for (auto* ae : *activeEffects) {
-            if (!ae || ae->flags.any(RE::ActiveEffect::Flag::kInactive)) {
+            if (!ae || ae->flags.any(RE::ActiveEffect::Flag::kInactive) || !ae->effect) {
                 continue;
             }
 
@@ -23,7 +23,7 @@ namespace {
 
             auto arch = mgef->GetArchetype();
             if ((arch == RE::EffectSetting::Archetype::kPeakValueModifier ||
-                 arch == RE::EffectSetting::Archetype::kValueModifier) &&
+                arch == RE::EffectSetting::Archetype::kValueModifier) &&
                 mgef->GetMagickSkill() == RE::ActorValue::kAlchemy) {
                 totalBonus += ae->magnitude;
             }

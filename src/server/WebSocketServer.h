@@ -13,7 +13,7 @@ namespace SkyPotion::Server {
             return instance;
         }
 
-        bool Start(uint16_t port = 8765, const std::string& host = "0.0.0.0");
+        bool Start(uint16_t port = 47778, const std::string& host = "0.0.0.0");
         void Stop();
         bool IsRunning() const;
         bool HasConnectedClients() const;
@@ -22,6 +22,9 @@ namespace SkyPotion::Server {
         void BroadcastFullSnapshot();
         void BroadcastGameData();
         void BroadcastGameSessionLoaded();
+
+        void BroadcastBinary(const std::string& binaryPayload);
+        void BroadcastProtoSnapshot(); // 초기 접속 / 세이브 로드 시 CatalogSnapshot + BenchState 전송
 
     private:
         WebSocketServer();
@@ -39,8 +42,11 @@ namespace SkyPotion::Server {
 
         std::unique_ptr<ix::WebSocketServer> _server;
         std::atomic<bool> _running{false};
-        uint16_t _port{8765};
+        uint16_t _port{47778};
         std::string _host{"0.0.0.0"};
+        std::atomic<int> _clientCount{ 0 };
+
+        void HandleProtoCommand(ix::WebSocket& webSocket, const std::string& rawBytes);
     };
 
 }

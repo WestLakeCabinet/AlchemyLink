@@ -9,6 +9,7 @@
     "ixwebsocket",
     "spdlog",
     "rapidcsv",
-    "directxtk"
+    "directxtk",
+    "protobuf"
   ]
 }

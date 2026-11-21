@@ -17,12 +17,13 @@ public:
     static InventoryEventHandler* GetSingleton();
     void Register();
 
-    // 1. 재료 획득/소모 감지
+    // 로딩 중 이벤트 무시용 상태 제어
+    void SetLoading(bool loading) { _isLoading.store(loading); }
+
     RE::BSEventNotifyControl ProcessEvent(
         const RE::TESContainerChangedEvent* a_event,
         RE::BSTEventSource<RE::TESContainerChangedEvent>* a_eventSource) override;
 
-    // 2. 장비 착용/해제 감지
     RE::BSEventNotifyControl ProcessEvent(
         const RE::TESEquipEvent* a_event,
         RE::BSTEventSource<RE::TESEquipEvent>* a_eventSource) override;
@@ -34,6 +35,7 @@ public:
     void ExecuteAlchemyStatsSync();
 
 private:
+    std::atomic<bool> _isLoading{ true }; // 초기값 true (게임 로드 완료 전까지 차단)
     std::atomic<bool> _syncPending{ false };
     std::atomic<int64_t> _lastSyncTimeMs{ 0 };
 

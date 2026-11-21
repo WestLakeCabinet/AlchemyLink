@@ -1,5 +1,7 @@
 #include "game/AlchemyController.h"
+#include "game/InventoryExtractor.h"   // 추가
 #include "server/WebSocketServer.h"
+#include "sync/ProtoPacketBuilder.h"   // 추가
 #include "RE/M/MessageBoxMenu.h"
 #include "RE/M/MessageBoxData.h"
 #include <chrono>
@@ -44,6 +46,7 @@ namespace SkyPotion::Game {
     }
 
     bool AlchemyController::StopCrafting() {
+        SKSE::log::info("AlchemyController StopCrafting");
         if (s_isCrafting.load()) {
             s_craftCancel.store(true);
             SKSE::log::info("AlchemyController: StopCrafting requested");
@@ -696,50 +699,27 @@ namespace SkyPotion::Game {
                         SKSE::log::info("CraftingMenu: Alchemy ItemList OPENED! (cppEntries={}, check={})",
                             alchemyMenu->ingredientEntries.size(), session->checkCount);
 
-                        std::vector<std::string> hexSelected;
-                        for (auto id : session->lastSelected) {
-                            hexSelected.push_back(std::format("0x{:08X}", id));
-                        }
-
-                        nlohmann::json evt = {
-                            { "type", "event" },
-                            { "event", "alchemy.menu" },
-                            { "isOpen", true },
-                            { "selectedIngredients", hexSelected },
-                            { "ts", nowMs }
-                        };
-                        Server::WebSocketServer::GetSingleton().Broadcast(evt);
+                        Server::WebSocketServer::GetSingleton().BroadcastBinary(
+                            Sync::ProtoPacketBuilder::BuildAlchemyBenchState(true, session->lastSelected)
+                        );
                     } else if (!isReady && session->wasListReady) {
                         session->wasListReady = false;
                         session->lastSelected.clear();
                         SKSE::log::info("CraftingMenu: Alchemy ItemList CLOSED (back to categories).");
 
-                        nlohmann::json evt = {
-                            { "type", "event" },
-                            { "event", "alchemy.menu" },
-                            { "isOpen", false },
-                            { "selectedIngredients", nlohmann::json::array() },
-                            { "ts", nowMs }
-                        };
-                        Server::WebSocketServer::GetSingleton().Broadcast(evt);
+                        Server::WebSocketServer::GetSingleton().BroadcastBinary(
+                            Sync::ProtoPacketBuilder::BuildAlchemyBenchState(false, {})
+                        );
                     } else if (isReady && session->wasListReady) {
                         auto currentSelected = AlchemyController::GetSelectedIngredientFormIDs();
                         if (currentSelected != session->lastSelected) {
                             session->lastSelected = currentSelected;
+                            SKSE::log::info("CraftingMenu: Alchemy selection changed in Skyrim (count={})",
+                                session->lastSelected.size());
 
-                            std::vector<std::string> hexSelected;
-                            for (auto id : session->lastSelected) {
-                                hexSelected.push_back(std::format("0x{:08X}", id));
-                            }
-
-                            SKSE::log::info("CraftingMenu: Alchemy selection changed in Skyrim (count={})", hexSelected.size());
-                            nlohmann::json evt = {
-                                { "type", "event" },
-                                { "event", "alchemy.selection" },
-                                { "selectedIngredients", hexSelected },
-                                { "ts", nowMs }
-                            };
-                            Server::WebSocketServer::GetSingleton().Broadcast(evt);
+                            Server::WebSocketServer::GetSingleton().BroadcastBinary(
+                                Sync::ProtoPacketBuilder::BuildAlchemyBenchState(true, session->lastSelected)
+                            );
                         }
                     }
 
@@ -812,16 +792,9 @@ namespace SkyPotion::Game {
             AlchemyController::StopCrafting();
             StopMonitoring();
 
-            int64_t nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::system_clock::now().time_since_epoch()).count();
-            nlohmann::json evt = {
-                { "type", "event" },
-                { "event", "alchemy.menu" },
-                { "isOpen", false },
-                { "selectedIngredients", nlohmann::json::array() },
-                { "ts", nowMs }
-            };
-            Server::WebSocketServer::GetSingleton().Broadcast(evt);
+            Server::WebSocketServer::GetSingleton().BroadcastBinary(
+                Sync::ProtoPacketBuilder::BuildAlchemyBenchState(false, {})
+            );
             return RE::BSEventNotifyControl::kContinue;
         }
 
@@ -831,23 +804,16 @@ namespace SkyPotion::Game {
                 AlchemyController::StopCrafting();
                 StopMonitoring();
 
-                int64_t nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-                    std::chrono::system_clock::now().time_since_epoch()).count();
-                nlohmann::json evt = {
-                    { "type", "event" },
-                    { "event", "alchemy.menu" },
-                    { "isOpen", false },
-                    { "selectedIngredients", nlohmann::json::array() },
-                    { "ts", nowMs }
-                };
-                Server::WebSocketServer::GetSingleton().Broadcast(evt);
+                Server::WebSocketServer::GetSingleton().BroadcastBinary(
+                    Sync::ProtoPacketBuilder::BuildAlchemyBenchState(false, {})
+                );
             } else {
                 SKSE::log::info("MenuOpenCloseEvent: LoadingMenu closed. Scheduling session snapshot.");
                 auto taskInterface = SKSE::GetTaskInterface();
                 if (taskInterface) {
                     taskInterface->AddTask([]() {
                         if (Util::IsGameSessionReady()) {
-                            Server::WebSocketServer::GetSingleton().BroadcastFullSnapshot();
+                            Server::WebSocketServer::GetSingleton().BroadcastProtoSnapshot();
                         }
                     });
                 }
@@ -865,17 +831,16 @@ namespace SkyPotion::Game {
                 AlchemyController::StopCrafting();
                 StopMonitoring();
 
-                int64_t nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-                    std::chrono::system_clock::now().time_since_epoch()).count();
-                nlohmann::json evt = {
-                    { "type", "event" },
-                    { "event", "alchemy.menu" },
-                    { "isOpen", false },
-                    { "selectedIngredients", nlohmann::json::array() },
-                    { "ts", nowMs }
-                };
-                Server::WebSocketServer::GetSingleton().Broadcast(evt);
+                Server::WebSocketServer::GetSingleton().BroadcastBinary(
+                    Sync::ProtoPacketBuilder::BuildAlchemyBenchState(false, {})
+                );
             }
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
+        // 퍽/스킬 레벨업 메뉴 닫힐 때 연금술 스탯 즉시 동기화
+        if (a_event->menuName == RE::StatsMenu::MENU_NAME && !a_event->opening) {
+            InventoryEventHandler::GetSingleton()->RequestAlchemyStatsSync();
         }
 
         return RE::BSEventNotifyControl::kContinue;

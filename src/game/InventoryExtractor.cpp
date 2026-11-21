@@ -1,6 +1,7 @@
 #include "game/InventoryExtractor.h"
 #include "game/StatExtractor.h"
 #include "server/WebSocketServer.h"
+#include "sync/ProtoPacketBuilder.h"
 #include <chrono>
 
 namespace SkyPotion::Game {
@@ -70,9 +71,11 @@ void InventoryEventHandler::Register() {
 RE::BSEventNotifyControl InventoryEventHandler::ProcessEvent(
     const RE::TESContainerChangedEvent* a_event,
     RE::BSTEventSource<RE::TESContainerChangedEvent>*) {
-    if (!a_event) return RE::BSEventNotifyControl::kContinue;
+    if (!a_event || !Server::WebSocketServer::GetSingleton().HasConnectedClients()) {
+        return RE::BSEventNotifyControl::kContinue;
+    }
 
-    if (!Server::WebSocketServer::GetSingleton().HasConnectedClients()) {
+    if (_isLoading.load() || !Util::IsGameSessionReady()) {
         return RE::BSEventNotifyControl::kContinue;
     }
 
@@ -92,14 +95,16 @@ RE::BSEventNotifyControl InventoryEventHandler::ProcessEvent(
 RE::BSEventNotifyControl InventoryEventHandler::ProcessEvent(
     const RE::TESEquipEvent* a_event,
     RE::BSTEventSource<RE::TESEquipEvent>*) {
-    if (!a_event || !a_event->actor) return RE::BSEventNotifyControl::kContinue;
-
-    if (!Server::WebSocketServer::GetSingleton().HasConnectedClients()) {
+    if (!a_event || !Server::WebSocketServer::GetSingleton().HasConnectedClients()) {
         return RE::BSEventNotifyControl::kContinue;
     }
 
-    // 플레이어 본인의 장비 변경만 감지 (NPC 장비 변경 무시)
-    if (!a_event->actor->IsPlayerRef()) {
+    if (_isLoading.load() || !Util::IsGameSessionReady()) {
+        return RE::BSEventNotifyControl::kContinue;
+    }
+
+    auto* actor = a_event->actor.get();
+    if (!actor || !actor->IsPlayerRef()) {
         return RE::BSEventNotifyControl::kContinue;
     }
 
@@ -133,7 +138,6 @@ void InventoryEventHandler::ExecuteInventorySync() {
 
     int64_t nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::system_clock::now().time_since_epoch()).count();
-
     if (nowMs - _lastSyncTimeMs.load() < 150) {
         _syncPending.store(false);
         return;
@@ -142,17 +146,28 @@ void InventoryEventHandler::ExecuteInventorySync() {
     _syncPending.store(false);
     _lastSyncTimeMs.store(nowMs);
 
-    auto ingredients = InventoryExtractor::GetIngredientsJson();
+    auto bin = Sync::ProtoPacketBuilder::BuildInventoryFullSnapshot();
+    Server::WebSocketServer::GetSingleton().BroadcastBinary(bin);
+}
 
-    nlohmann::json ingPacket = {
-        { "type", "data" },
-        { "id", "inventory.ingredients" },
-        { "fields", { { "items", std::move(ingredients) } } },
-        { "ts", nowMs }
-    };
-    Server::WebSocketServer::GetSingleton().Broadcast(ingPacket);
+void InventoryEventHandler::ExecuteAlchemyStatsSync() {
+    if (!Server::WebSocketServer::GetSingleton().HasConnectedClients() || !Util::IsGameSessionReady()) {
+        _alchemySyncPending.store(false);
+        return;
+    }
 
-    SKSE::log::info("InventoryEventHandler: Broadcasted updated ingredients");
+    int64_t nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    if (nowMs - _lastAlchemySyncTimeMs.load() < 100) {
+        _alchemySyncPending.store(false);
+        return;
+    }
+
+    _alchemySyncPending.store(false);
+    _lastAlchemySyncTimeMs.store(nowMs);
+
+    auto bin = Sync::ProtoPacketBuilder::BuildPlayerAlchemyStats();
+    Server::WebSocketServer::GetSingleton().BroadcastBinary(bin);
 }
 
 void InventoryEventHandler::RequestAlchemyStatsSync() {
@@ -168,36 +183,4 @@ void InventoryEventHandler::RequestAlchemyStatsSync() {
         }
     }
 }
-
-void InventoryEventHandler::ExecuteAlchemyStatsSync() {
-    if (!Server::WebSocketServer::GetSingleton().HasConnectedClients() || !Util::IsGameSessionReady()) {
-        _alchemySyncPending.store(false);
-        return;
-    }
-
-    int64_t nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::system_clock::now().time_since_epoch()).count();
-
-    // 장비 교체 시 기존 장비 해제 + 새 장비 착용 이벤트가 연속 발생하므로 100ms 디바운스 적용
-    if (nowMs - _lastAlchemySyncTimeMs.load() < 100) {
-        _alchemySyncPending.store(false);
-        return;
-    }
-
-    _alchemySyncPending.store(false);
-    _lastAlchemySyncTimeMs.store(nowMs);
-
-    auto alchemyStats = StatExtractor::GetAlchemyStatsJson();
-
-    nlohmann::json statsPacket = {
-        { "type", "data" },
-        { "id", "skypotion.alchemy" },
-        { "fields", std::move(alchemyStats) },
-        { "ts", nowMs }
-    };
-    Server::WebSocketServer::GetSingleton().Broadcast(statsPacket);
-
-    SKSE::log::info("InventoryEventHandler: Broadcasted updated skypotion.alchemy on equip change");
-}
-
 } // namespace SkyPotion::Game

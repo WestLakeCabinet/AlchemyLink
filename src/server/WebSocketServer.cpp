@@ -4,6 +4,7 @@
 #include "game/StatExtractor.h"
 #include "game/AlchemyDataExtractor.h"
 #include "game/AlchemyController.h"
+#include "sync/ProtoPacketBuilder.h"
 
 #include <chrono>
 #include <future>
@@ -62,6 +63,7 @@ namespace SkyPotion::Server {
         if (!_running.load()) return;
 
         SKSE::log::info("Stopping SkyPotion WebSocketServer...");
+        _clientCount.store(0, std::memory_order_relaxed);
         if (_server) {
             _server->stop();
             _server.reset();
@@ -74,8 +76,8 @@ namespace SkyPotion::Server {
     }
 
     bool WebSocketServer::HasConnectedClients() const {
-        if (!_running.load() || !_server) return false;
-        return !_server->getClients().empty();
+        return _running.load(std::memory_order_relaxed) &&
+            _clientCount.load(std::memory_order_relaxed) > 0;
     }
 
     void WebSocketServer::Broadcast(const nlohmann::json& message) {
@@ -93,12 +95,13 @@ namespace SkyPotion::Server {
                                     ix::WebSocket& webSocket,
                                     const ix::WebSocketMessagePtr& msg) {
         if (msg->type == ix::WebSocketMessageType::Open) {
-            SKSE::log::info("Client connected: {} (URI: {})", 
-                connectionState ? connectionState->getId() : "unknown", 
+            _clientCount.fetch_add(1, std::memory_order_relaxed);
+            SKSE::log::info("Client connected: {} (URI: {})",
+                connectionState ? connectionState->getId() : "unknown",
                 msg->openInfo.uri);
 
-            // Send game session data only if game is loaded and player is ready
-            BroadcastFullSnapshot();
+            // 안드로이드 앱(/skypotion/sync) 접속 시 Protobuf 스냅샷 즉시 전송
+            BroadcastProtoSnapshot();
             return;
         }
 
@@ -106,8 +109,9 @@ namespace SkyPotion::Server {
             SKSE::log::info("Client disconnected: {}", 
                 connectionState ? connectionState->getId() : "unknown");
 
-            if (!HasConnectedClients()) {
-                SKSE::log::info("All clients disconnected. Halting crafting and monitoring.");
+            int prev = _clientCount.fetch_sub(1, std::memory_order_relaxed);
+            if (prev <= 1) {
+                _clientCount.store(0, std::memory_order_relaxed);
                 Game::AlchemyController::StopCrafting();
                 Game::MenuOpenCloseHandler::StopMonitoring();
             }
@@ -126,6 +130,12 @@ namespace SkyPotion::Server {
         }
 
         if (msg->type == ix::WebSocketMessageType::Message) {
+            // 바이너리 프레임 -> Protobuf AppCommandPacket 처리
+            if (msg->binary) {
+                HandleProtoCommand(webSocket, msg->str);
+                return;
+            }
+
             try {
                 auto root = nlohmann::json::parse(msg->str);
                 std::string type = root.value("type", "");
@@ -560,6 +570,84 @@ namespace SkyPotion::Server {
         }
     }
 
+    void WebSocketServer::HandleProtoCommand(ix::WebSocket& webSocket, const std::string& rawBytes) {
+        Sync::pb::AppCommandPacket cmd;
+        if (!cmd.ParseFromString(rawBytes)) {
+            SKSE::log::warn("HandleProtoCommand: failed to parse AppCommandPacket ({} bytes)", rawBytes.size());
+            return;
+        }
+
+        const uint64_t reqId = cmd.request_id();
+        auto* taskInterface = SKSE::GetTaskInterface();
+        if (!taskInterface) {
+            webSocket.sendBinary(Sync::ProtoPacketBuilder::BuildCommandResult(reqId, false, 0, "NO_TASK_INTERFACE"));
+            return;
+        }
+
+        // 1) 재료 선택 동기화 (Fire-and-Forget)
+        if (cmd.has_select_ingredients()) {
+            std::vector<RE::FormID> formIds;
+            formIds.reserve(cmd.select_ingredients().form_ids_size());
+            for (uint32_t id : cmd.select_ingredients().form_ids()) {
+                formIds.push_back(static_cast<RE::FormID>(id));
+            }
+
+            taskInterface->AddTask([formIds = std::move(formIds)]() {
+                if (!Util::IsGameSessionReady() || !Game::AlchemyController::IsAlchemyMenuOpen()) {
+                    return;
+                }
+                if (formIds.empty()) {
+                    Game::AlchemyController::ClearSelectedIngredients();
+                } else {
+                    Game::AlchemyController::SelectIngredients(formIds, /*autoCraft=*/false, /*craftCount=*/0);
+                }
+            });
+            return;
+        }
+
+        // 2) 포션 제조 요청 (응답 대기 -> CommandResult 반환)
+        if (cmd.has_craft_potion()) {
+            std::vector<RE::FormID> formIds;
+            formIds.reserve(cmd.craft_potion().form_ids_size());
+            for (uint32_t id : cmd.craft_potion().form_ids()) {
+                formIds.push_back(static_cast<RE::FormID>(id));
+            }
+            const int32_t count = cmd.craft_potion().count();
+
+            auto promise = std::make_shared<std::promise<std::string>>();
+            auto future = promise->get_future();
+
+            taskInterface->AddTask([this, promise, reqId, formIds = std::move(formIds), count]() {
+                if (!Util::IsGameSessionReady() || !Game::AlchemyController::IsAlchemyMenuOpen()) {
+                    promise->set_value(
+                        Sync::ProtoPacketBuilder::BuildCommandResult(reqId, false, 0, "BENCH_CLOSED")
+                    );
+                    return;
+                }
+
+                auto result = Game::AlchemyController::SelectIngredients(formIds, /*autoCraft=*/true, count);
+                std::string errorCode = result.success ? "" : (result.message.empty() ? "CRAFT_FAILED" : result.message);
+
+                promise->set_value(
+                    Sync::ProtoPacketBuilder::BuildCommandResult(reqId, result.success, result.craftedCount, errorCode)
+                );
+
+                // 제조 성공 시 스킬 레벨업 / 신규 효과 해금 동기화
+                if (result.success) {
+                    BroadcastBinary(Sync::ProtoPacketBuilder::BuildDiscoveredEffects(formIds));
+                    Game::InventoryEventHandler::GetSingleton()->RequestAlchemyStatsSync();
+                }
+            });
+
+            if (future.wait_for(std::chrono::milliseconds(2500)) == std::future_status::ready) {
+                webSocket.sendBinary(future.get());
+            } else {
+                SKSE::log::warn("HandleProtoCommand: craft_potion (reqId={}) timed out", reqId);
+                webSocket.sendBinary(Sync::ProtoPacketBuilder::BuildCommandResult(reqId, false, 0, "TIMEOUT"));
+            }
+        }
+    }
+
     void WebSocketServer::BroadcastGameSessionLoaded() {
         auto taskInterface = SKSE::GetTaskInterface();
         if (taskInterface) {
@@ -578,11 +666,16 @@ namespace SkyPotion::Server {
                     }
 
                     // Fast read of dynamic player pointers on main thread (< 1ms)
+                    SKSE::log::info("[TRACE] Snapshot 1: GetPlayerStatsJson");
                     auto charStats = Game::StatExtractor::GetPlayerStatsJson();
+                    SKSE::log::info("[TRACE] Snapshot 2: GetAlchemyStatsJson");
                     auto alchemyStats = Game::StatExtractor::GetAlchemyStatsJson();
+                    SKSE::log::info("[TRACE] Snapshot 3: GetAllPerksJson & Summary");
                     auto allPerks = Game::PerkExtractor::GetAllPerksJson();
                     auto alchemyPerks = Game::PerkExtractor::GetAlchemyPerksSummary();
+                    SKSE::log::info("[TRACE] Snapshot 4: GetIngredientsJson");
                     auto ingredients = Game::InventoryExtractor::GetIngredientsJson();
+                    SKSE::log::info("[TRACE] Snapshot 5: IsAlchemyItemListReady");
                     bool isOpen = Game::AlchemyController::IsAlchemyItemListReady();
 
                     int64_t nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -657,5 +750,54 @@ namespace SkyPotion::Server {
             });
         }
     }
+
+    void WebSocketServer::BroadcastBinary(const std::string& binaryPayload) {
+    if (!_running.load() || !_server || binaryPayload.empty()) return;
+
+    for (auto& client : _server->getClients()) {
+        if (client) {
+            client->sendBinary(binaryPayload);
+        }
+    }
+}
+
+void WebSocketServer::BroadcastProtoSnapshot() {
+    if (!HasConnectedClients()) return;
+
+    auto* taskInterface = SKSE::GetTaskInterface();
+    if (!taskInterface) return;
+
+    taskInterface->AddTask([this]() {
+        try {
+            if (!_running.load() || !_server || !HasConnectedClients()) return;
+            if (!Util::IsGameSessionReady()) {
+                SKSE::log::info("BroadcastProtoSnapshot: Game session not ready, deferring");
+                return;
+            }
+
+            // 1) 마스터 카탈로그 + 초기 스탯 + 초기 재고 + 발견 마스크 일괄 전송
+            std::string catalogBin = Sync::ProtoPacketBuilder::BuildCatalogSnapshot();
+            if (!catalogBin.empty()) {
+                BroadcastBinary(catalogBin);
+            }
+
+            // 2) 현재 연금술대 열림 상태 및 선택 재료 전송
+            bool isOpen = Game::AlchemyController::IsAlchemyItemListReady();
+            std::vector<RE::FormID> selected = isOpen
+                ? Game::AlchemyController::GetSelectedIngredientFormIDs()
+                : std::vector<RE::FormID>{};
+
+            if (isOpen) {
+                Game::MenuOpenCloseHandler::StartMonitoring();
+            }
+
+            BroadcastBinary(Sync::ProtoPacketBuilder::BuildAlchemyBenchState(isOpen, selected));
+            SKSE::log::info("BroadcastProtoSnapshot: sent CatalogSnapshot ({} bytes, benchOpen={})",
+                catalogBin.size(), isOpen);
+        } catch (const std::exception& e) {
+            SKSE::log::error("Error in BroadcastProtoSnapshot: {}", e.what());
+        }
+    });
+}
 
 }

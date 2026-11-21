@@ -39,22 +39,25 @@ namespace {
         if (!a_msg) return;
 
         switch (a_msg->type) {
-            case SKSE::MessagingInterface::kDataLoaded:
-                SKSE::log::info("Skyrim data loaded. Starting SkyPotion WebSocket server on port 8765...");
-                SkyPotion::Server::WebSocketServer::GetSingleton().Start(8765, "0.0.0.0");
-                SkyPotion::Game::MenuOpenCloseHandler::GetSingleton()->Register();
-                SkyPotion::Game::InventoryEventHandler::GetSingleton()->Register();
-                break;
+        case SKSE::MessagingInterface::kDataLoaded:
+            SKSE::log::info("Skyrim data loaded. Starting SkyPotion WebSocket server on port 47778...");
+            SkyPotion::Server::WebSocketServer::GetSingleton().Start(47778, "0.0.0.0");
+            SkyPotion::Game::MenuOpenCloseHandler::GetSingleton()->Register();
+            SkyPotion::Game::InventoryEventHandler::GetSingleton()->Register();
+            break;
 
-            case SKSE::MessagingInterface::kPreLoadGame:
-                SKSE::log::info("SKSE Message: kPreLoadGame. Halting any active craft.");
-                SkyPotion::Game::AlchemyController::StopCrafting();
-                break;
+        case SKSE::MessagingInterface::kPreLoadGame:
+            SKSE::log::info("SKSE Message: kPreLoadGame. Halting any active craft.");
+            SkyPotion::Game::InventoryEventHandler::GetSingleton()->SetLoading(true);
+            SkyPotion::Game::AlchemyController::StopCrafting();
+            SKSE::log::info("SKSE Message: kPreLoadGame completed.");
+            break;
 
-            case SKSE::MessagingInterface::kPostLoadGame:
-            case SKSE::MessagingInterface::kNewGame:
-                SKSE::log::info("Game session started or loaded.");
-                break;
+        case SKSE::MessagingInterface::kPostLoadGame:
+        case SKSE::MessagingInterface::kNewGame:
+            SKSE::log::info("Game session started or loaded.");
+            SkyPotion::Game::InventoryEventHandler::GetSingleton()->SetLoading(false);
+            break;
 
             default:
                 break;

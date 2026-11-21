@@ -1,0 +1,151 @@
+syntax = "proto3";
+
+package com.dolzzo.skypotion.proto.sync;
+
+option java_package = "com.dolzzo.skypotion.proto.sync";
+
+// 모든 게임 -> 앱 통신의 최상위 래퍼 패킷
+// ============================================================================
+// [Game -> App] 기존 GameSyncPacket의 oneof payload에 2개 추가
+// ============================================================================
+message GameSyncPacket {
+  uint32 protocol_version = 1;
+  int64 timestamp_ms = 2;
+
+  oneof payload {
+    CatalogSnapshot catalog_snapshot = 10;
+    InventoryUpdate inventory_update = 11;
+    PlayerAlchemyStats player_stats = 12;
+    DiscoveredEffectsUpdate discovered = 13;
+    Heartbeat heartbeat = 14;
+
+    AlchemyBenchState bench_state = 15;          // NEW: 연금술대 열림/닫힘 & 선택 재료
+    CommandResult command_result = 16;           // NEW: 앱 명령 실행 결과 응답
+  }
+}
+
+// ============================================================================
+// 1. 초기 접속 시 마스터 데이터 (첨부 CSV 구조 + 모드 환경 대응)
+// ============================================================================
+message CatalogSnapshot {
+  string session_id = 1;                // 세이브/세션 식별자
+  string character_name = 2;            // 현재 로드된 캐릭터 이름 (프로필 매칭용)
+  string game_language = 3;             // 게임 언어 코드 (예: "ko", "en")
+
+  // 모드(Mod)로 추가/수정된 효과가 있을 수 있으므로 BaseEffect 정의도 함께 수신 권장
+  // 비어있으면 앱 기본 Asset CSV의 BaseEffect를 그대로 사용
+  repeated BaseEffectDef base_effects = 4;
+
+  // 첨부된 CSV(ingredients_updated.csv)와 1:1 매핑되는 재료 목록
+  repeated IngredientDef ingredients = 5;
+
+  // 초기 접속 시점의 플레이어 스탯과 재고를 한 번에 포함 가능
+  PlayerAlchemyStats initial_stats = 6;
+}
+
+message BaseEffectDef {
+  uint32 form_id = 1;          // 32-bit FormID (예: 0x0003EB15)
+  string name = 2;             // 게임 내 표시 이름 (현지화된 이름 포함)
+  string description = 3;      // 효과 설명
+  double base_cost = 4;        // 기본 가치(cost)
+  bool no_mag = 5;
+  bool no_dur = 6;
+  bool affect_mag = 7;
+  bool affect_dur = 8;
+  bool is_poison = 9;          // Detrimental / Hostile 여부
+  string keywords = 10;        // "beneficial", "harmful", "none" 등
+}
+
+message IngredientDef {
+  uint32 form_id = 1;          // CSV: FormID (Hex -> uint32)
+  string name = 2;             // CSV: Name (게임 내 현지화 이름 그대로 수신 가능)
+  int32 price = 3;             // CSV: Value
+  double weight = 4;           // CSV: Weight
+  int32 effect_value = 5;  // CSV: Ingredient Value (effectValue)
+  repeated EffectSlot slots = 6; // CSV: E1~E4, Mag1~4, Dur1~4 (최대 4개)
+  string origin = 7;           // CSV: FileName (예: "Skyrim.esm", "Dawnguard.esm", 모드 esp명)
+  int32 current_stock = 8;     // CSV: default_stock 위치 -> 실제 플레이어 인벤토리 초기 수량
+  uint32 discovered_mask = 9;  // 4비트 마스크 (0x00 ~ 0x0F, 해금된 효과 슬롯)
+}
+
+message EffectSlot {
+  uint32 form_id = 1;          // 효과 FormID
+  double magnitude = 2;        // Mag
+  int32 duration = 3;          // Dur
+}
+
+// ============================================================================
+// 2. 실시간 재료 재고 업데이트
+// ============================================================================
+message InventoryUpdate {
+  // true: 플레이어 인벤토리 전체 스냅샷 (목록에 없는 재료는 재고 0 처리)
+  // false: 변동된 재료만 전달 (증분 업데이트)
+  bool is_full_snapshot = 1;
+  repeated StockEntry items = 2;
+}
+
+message StockEntry {
+  uint32 form_id = 1;
+  int32 count = 2;             // 절대 수량 (증감치보다 절대 수량이 패킷 유실 시 복구에 안전)
+}
+
+// ============================================================================
+// 3. 실시간 플레이어 연금술 스탯 & 퍽
+// ============================================================================
+message PlayerAlchemyStats {
+  string character_name = 1;
+  int32 skill_level = 2;          // 연금술 스킬 레벨 (기본 15~100+)
+  int32 fortify_alchemy_total = 3;// 장비/버프 등 Fortify Alchemy 효과 총합 (%)
+  int32 alchemist_rank = 4;       // Alchemist 퍽 랭크 (0 ~ 5)
+  bool benefactor = 5;            // Benefactor 퍽 보유 여부
+  bool physician = 6;             // Physician 퍽 보유 여부
+  bool poisoner = 7;              // Poisoner 퍽 보유 여부
+  bool purity = 8;                // Purity 퍽 보유 여부
+}
+
+// ============================================================================
+// 4. 기타 실시간 이벤트
+// ============================================================================
+message DiscoveredEffectsUpdate {
+  map<uint32, uint32> discovered_masks = 1; // form_id -> 4-bit mask (0x00~0x0F)
+}
+
+message Heartbeat {
+  int64 seq = 1;
+}
+
+
+
+message AlchemyBenchState {
+  bool is_open = 1;                              // 연금술대 메뉴 활성화 여부
+  repeated uint32 selected_form_ids = 2;         // 현재 게임 연금술대에서 선택된 재료 (0~3개)
+}
+
+message CommandResult {
+  uint64 request_id = 1;                         // AppCommandPacket.request_id와 매칭
+  bool success = 2;
+  int32 crafted_count = 3;                       // 실제 제조 완료된 수량
+  string error_code = 4;                         // "BENCH_CLOSED", "OUT_OF_STOCK", "INVALID_RECIPE" 등
+}
+
+// ============================================================================
+// [App -> Game] 앱에서 게임으로 보내는 제어 패킷
+// ============================================================================
+message AppCommandPacket {
+  uint32 protocol_version = 1;
+  uint64 request_id = 2;                         // 응답 매칭용 고유 ID (AtomicLong)
+
+  oneof command {
+    SelectIngredientsCommand select_ingredients = 10; // 재료 선택/해제 동기화
+    CraftPotionCommand craft_potion = 11;             // 포션 제조 요청
+  }
+}
+
+message SelectIngredientsCommand {
+  repeated uint32 form_ids = 1;                  // 0개(전체 해제) ~ 최대 3개
+}
+
+message CraftPotionCommand {
+  repeated uint32 form_ids = 1;                  // 제조할 재료 2~3개
+  int32 count = 2;                               // 제조 수량 (1 또는 maxCount)
+}
