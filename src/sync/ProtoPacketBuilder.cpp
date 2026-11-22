@@ -29,6 +29,7 @@ std::string ProtoPacketBuilder::ResolveGameLanguage() {
     return "ENGLISH";
 }
 
+/*
 double ProtoPacketBuilder::GetTotalFortifyAlchemy(RE::PlayerCharacter* player) {
     if (!player || !Util::IsGameSessionReady()) return 0.0;
 
@@ -55,6 +56,16 @@ double ProtoPacketBuilder::GetTotalFortifyAlchemy(RE::PlayerCharacter* player) {
     }
     return totalBonus;
 }
+*/
+
+double ProtoPacketBuilder::GetTotalFortifyAlchemy(RE::PlayerCharacter* player) {
+    if (!player || !Util::IsGameSessionReady()) return 0.0;
+    auto* avOwner = player->AsActorValueOwner();
+    if (!avOwner) return 0.0;
+                     //env.alchemyModifierPct = avo->GetActorValue(RE::ActorValue::kAlchemyModifier);
+                     //env.alchemyPowerModifierPct = avo->GetActorValue(RE::ActorValue::kAlchemyPowerModifier);
+    return static_cast<double>(avOwner->GetActorValue(RE::ActorValue::kAlchemyModifier));
+}
 
 void ProtoPacketBuilder::FillPlayerAlchemyStats(pb::PlayerAlchemyStats* out) {
     if (!out || !Util::IsGameSessionReady()) return;
@@ -66,8 +77,8 @@ void ProtoPacketBuilder::FillPlayerAlchemyStats(pb::PlayerAlchemyStats* out) {
 
     if (auto* avOwner = player->AsActorValueOwner()) {
         out->set_skill_level(static_cast<int32_t>(std::round(avOwner->GetActorValue(RE::ActorValue::kAlchemy))));
+        out->set_fortify_alchemy_total(static_cast<int32_t>(std::round(avOwner->GetActorValue(RE::ActorValue::kAlchemyModifier))));
     }
-    out->set_fortify_alchemy_total(static_cast<int32_t>(std::round(GetTotalFortifyAlchemy(player))));
 
     auto hasPerk = [player](RE::FormID id) -> bool {
         auto* perk = RE::TESForm::LookupByID<RE::BGSPerk>(id);
@@ -187,7 +198,7 @@ std::string ProtoPacketBuilder::BuildCatalogSnapshot() {
         effDef->set_no_dur(flags.any(RE::EffectSetting::EffectSettingData::Flag::kNoDuration));
         effDef->set_affect_mag(flags.any(RE::EffectSetting::EffectSettingData::Flag::kPowerAffectsMagnitude));
         effDef->set_affect_dur(flags.any(RE::EffectSetting::EffectSettingData::Flag::kPowerAffectsDuration));
-        effDef->set_is_poison(flags.any(RE::EffectSetting::EffectSettingData::Flag::kDetrimental));
+        effDef->set_is_poison(flags.any(RE::EffectSetting::EffectSettingData::Flag::kHostile));
 
         if (mgef->HasKeywordString("MagicAlchBeneficial")) {
             effDef->set_keywords("beneficial");

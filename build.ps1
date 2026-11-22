@@ -1,5 +1,5 @@
 ﻿param(
-    [string]$skyrimPluginDir = "D:\Steam\steamapps\common\Skyrim Special Edition\Data\SKSE\Plugins",
+    [string]$skyrimPluginDir = "F:\SteamLibrary\steamapps\common\Skyrim Special Edition\Data\SKSE\Plugins",
     [switch]$Reconfigure
 )
 
@@ -8,7 +8,7 @@ $ErrorActionPreference = "Stop"
 $projectRoot = $PSScriptRoot
 Set-Location $projectRoot
 
-$vsPath = "D:\Microsoft Visual Studio\18\Community"
+$vsPath = "D:\Program Files\Microsoft Visual Studio\18\Community"
 $cmakeExe = "$vsPath\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe"
 $vcpkgToolchain = "$vsPath\VC\vcpkg\scripts\buildsystems\vcpkg.cmake"
 
