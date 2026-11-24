@@ -200,13 +200,33 @@ std::string ProtoPacketBuilder::BuildCatalogSnapshot() {
         effDef->set_affect_dur(flags.any(RE::EffectSetting::EffectSettingData::Flag::kPowerAffectsDuration));
         effDef->set_is_poison(flags.any(RE::EffectSetting::EffectSettingData::Flag::kHostile));
 
-        if (mgef->HasKeywordString("MagicAlchBeneficial")) {
-            effDef->set_keywords("beneficial");
-        } else if (mgef->HasKeywordString("MagicAlchHarmful")) {
-            effDef->set_keywords("harmful");
-        } else {
-            effDef->set_keywords("none");
+        std::string joinedKeywords;
+        std::unordered_set<std::string> seenKeywords;
+
+        for (const auto* kw : mgef->GetKeywords()) {
+            if (!kw) continue;
+
+            std::string token;
+            const char* kwEdid = kw->GetFormEditorID();
+            if (kwEdid && kwEdid[0] != '\0') {
+                token = kwEdid;
+            } else {
+                const char* kwName = kw->GetName();
+                if (kwName && kwName[0] != '\0') {
+                    token = kwName;
+                }
+            }
+
+            if (token.empty()) continue;
+            if (!seenKeywords.insert(token).second) continue;
+
+            if (!joinedKeywords.empty()) {
+                joinedKeywords += ",";
+            }
+            joinedKeywords += token;
         }
+
+        effDef->set_keywords(joinedKeywords);
     }
 
     return packet.SerializeAsString();

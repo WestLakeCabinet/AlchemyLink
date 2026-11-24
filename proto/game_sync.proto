@@ -53,7 +53,7 @@ message BaseEffectDef {
   bool affect_mag = 7;
   bool affect_dur = 8;
   bool is_poison = 9;          // Detrimental / Hostile 여부
-  string keywords = 10;        // "beneficial", "harmful", "none" 등
+  string keywords = 10;        // 콤마 구분 키워드 EditorID 목록 (예: "MagicAlchBeneficial,MagicDamageFire")
 }
 
 message IngredientDef {
