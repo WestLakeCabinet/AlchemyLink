@@ -15,7 +15,7 @@ message GameSyncPacket {
     // 마스터 데이터 (초기 접속 / 세이브 로드 시)
     CatalogSnapshot catalog_snapshot = 10;
 
-    // 실시간 인벤토리 업데이트 (재료, 소울젬, 스미싱 재료, 장비)
+    // 실시간 인벤토리 업데이트 (재료, 소울젬, 스미싱 재료, 장비, 포션)
     InventoryUpdate inventory_update = 11;
 
     // 플레이어 제작 스탯 & 퍽 (연금술 / 인챈팅 / 스미싱)
@@ -32,6 +32,15 @@ message GameSyncPacket {
 
     // 앱 명령 실행 결과 응답
     CommandResult command_result = 16;
+
+    // --- [NEW: 실시간 플레이어 생명력/매지카/스태미나 & 활성 버프] ---
+    PlayerVitalsUpdate player_vitals = 17;
+
+    // --- [NEW: 실시간 장비 핫키 프리셋 목록 및 활성 세팅 상태] ---
+    ActiveLoadoutsUpdate active_loadouts = 18;
+
+    // --- [NEW: 실시간 장착 마법 & 포효 상태] ---
+    EquippedSpellsUpdate equipped_spells = 19;
   }
 }
 
@@ -51,11 +60,18 @@ message CatalogSnapshot {
   repeated BaseEffectDef base_effects = 4;
   repeated IngredientDef ingredients = 5;
 
-  // --- [도메인: 마법부여] (NEW) ---
+  // --- [도메인: 마법부여] ---
   repeated KnownEnchantmentDef known_enchantments = 20; // 플레이어가 분해/습득한 인챈트 효과
 
-  // --- [도메인: 제련] (NEW) ---
+  // --- [도메인: 제련] ---
   repeated SmithingRecipeDef smithing_recipes = 30;     // 제작 가능한 대장간 레시피 (COBJ)
+
+  // --- [NEW: 도메인: 마법 & 포효 습득 목록] ---
+  repeated KnownSpellDef known_spells = 40;             // 플레이어가 습득한 주문(Spell) 목록
+  repeated KnownShoutDef known_shouts = 41;             // 플레이어가 습득한 포효(Shout/Power) 목록
+
+  // --- [NEW: 도메인: 저장된 장비 세팅 핫키 프리셋] ---
+  repeated EquipmentLoadout loadout_presets = 50;       // 저장된 장비 핫키 세팅 목록
 
   // 초기 접속 시점의 플레이어 제작 스탯
   PlayerCraftingStats initial_stats = 6;
@@ -96,7 +112,7 @@ message EffectSlot {
 }
 
 // ----------------------------------------------------------------------------
-// [도메인: 마법부여 마스터 데이터] (NEW)
+// [도메인: 마법부여 마스터 데이터]
 // ----------------------------------------------------------------------------
 message KnownEnchantmentDef {
   uint32 form_id = 1;                  // Enchantment FormID
@@ -108,7 +124,7 @@ message KnownEnchantmentDef {
 }
 
 // ----------------------------------------------------------------------------
-// [도메인: 제련 마스터 데이터] (NEW)
+// [도메인: 제련 마스터 데이터]
 // ----------------------------------------------------------------------------
 message SmithingRecipeDef {
   uint32 cobj_form_id = 1;             // ConstructibleObject (COBJ) FormID
@@ -125,6 +141,56 @@ message RecipeIngredient {
   int32 count = 2;                     // 필요 수량
 }
 
+// ----------------------------------------------------------------------------
+// [NEW: 도메인: 마법 & 포효 마스터 데이터]
+// ----------------------------------------------------------------------------
+enum MagicSchool {
+  MAGIC_SCHOOL_NONE = 0;
+  MAGIC_SCHOOL_ALTERATION = 1;         // 변화마법 (Alteration)
+  MAGIC_SCHOOL_CONJURATION = 2;        // 소환마법 (Conjuration)
+  MAGIC_SCHOOL_DESTRUCTION = 3;        // 파괴마법 (Destruction)
+  MAGIC_SCHOOL_ILLUSION = 4;           // 환영마법 (Illusion)
+  MAGIC_SCHOOL_RESTORATION = 5;        // 회복마법 (Restoration)
+  MAGIC_SCHOOL_SHOUT = 6;              // 용언 / 포효 (Dragon Shout)
+  MAGIC_SCHOOL_POWER = 7;              // 종족 / 일일 특수능력 (Power)
+}
+
+enum SpellCastType {
+  SPELL_CAST_CONSTANT = 0;             // 상시 지속 효과 (Constant Effect)
+  SPELL_CAST_FIRE_AND_FORGET = 1;      // 발사형 / 단발 시전 (Fire and Forget)
+  SPELL_CAST_CONCENTRATION = 2;        // 집중 유지형 (Concentration - 화염 방사 등)
+}
+
+enum SpellDelivery {
+  SPELL_DELIVERY_SELF = 0;             // 시전자 자신 (Self)
+  SPELL_DELIVERY_TOUCH = 1;            // 접촉 (Touch)
+  SPELL_DELIVERY_AIMED = 2;            // 조준 탄도체 (Aimed)
+  SPELL_DELIVERY_TARGET_ACTOR = 3;     // 대상 액터 지정 (Target Actor)
+  SPELL_DELIVERY_TARGET_LOCATION = 4;  // 대상 지점 지정 (Target Location - 룬/소환)
+}
+
+message KnownSpellDef {
+  uint32 form_id = 1;                  // Spell FormID (SPEL)
+  string name = 2;                     // 마법 이름
+  MagicSchool school = 3;              // 마법 학파
+  int32 magicka_cost = 4;              // 실제 소모 매지카 (스킬/퍽 적용치)
+  int32 base_magicka_cost = 5;         // 기본 소모 매지카
+  SpellCastType cast_type = 6;         // 시전 방식
+  SpellDelivery delivery = 7;          // 전달 방식
+  float charge_time = 8;               // 시전 준비 시간 (초)
+  int32 required_skill_level = 9;      // 필요 스킬 레벨 (0:Novice, 25:Apprentice, 50:Adept, 75:Expert, 100:Master)
+  string description = 10;             // 마법 설명
+  repeated EffectSlot effects = 11;    // 마법 효과 목록
+}
+
+message KnownShoutDef {
+  uint32 form_id = 1;                  // Shout FormID (SHOU)
+  string name = 2;                     // 포효 이름
+  int32 unlocked_words = 3;            // 해금된 단어 수 (1~3)
+  repeated float word_cooldowns = 4;   // 단어별 쿨다운 (초)
+  string description = 5;              // 설명
+}
+
 // ============================================================================
 // 2. 실시간 인벤토리 동기화
 // ============================================================================
@@ -133,7 +199,8 @@ message InventoryUpdate {
   repeated StockEntry items = 2;              // [연금술] 재료 재고 (하위 호환)
   repeated StockEntry smithing_materials = 3; // [스미싱] 잉곳, 광석, 가죽, 뼈 등
   repeated SoulGemEntry soul_gems = 4;        // [인챈팅] 소울젬 (충전 상태 포함)
-  repeated EquipmentEntry equipment = 5;      // [인챈팅/스미싱] 보유 장비 (강화/인챈트 대상)
+  repeated EquipmentEntry equipment = 5;      // [인챈팅/스미싱/장비] 보유 장비
+  repeated PotionEntry potions = 6;           // [NEW: 포션] 보유 중인 물약 및 독 목록
 }
 
 message StockEntry {
@@ -156,10 +223,90 @@ message EquipmentEntry {
   int32 temper_level = 4;              // 강화 등급 (0:None, 1:Fine, 2:Superior, 3:Flawless, 4:Epic, 5:Legendary)
   bool is_enchanted = 5;               // 이미 마법부여가 되어 있는지 여부
   repeated uint32 enchantment_ids = 6; // 적용된 인챈트 FormID들
+
+  // --- [NEW: 장착 상태 & 장비 스펙] ---
+  bool is_equipped = 7;                // 현재 플레이어가 착용 중인지 여부
+  EquipSlot equipped_slot = 8;         // 착용된 슬롯 위치
+  uint32 armor_rating = 9;             // 방어도 (Armor일 경우)
+  uint32 attack_damage = 10;           // 공격력 (Weapon일 경우)
+  double weight = 11;                  // 무게
+  int32 value = 12;                    // 가치 (Gold)
+}
+
+// ----------------------------------------------------------------------------
+// [NEW: 도메인: 물약 & 포션 데이터]
+// ----------------------------------------------------------------------------
+enum PotionCategory {
+  POTION_NONE = 0;
+  POTION_RESTORE_HEALTH = 1;           // 체력 회복
+  POTION_RESTORE_MAGICKA = 2;          // 매지카 회복
+  POTION_RESTORE_STAMINA = 3;          // 스태미나 회복
+  POTION_FORTIFY_ALCHEMY = 4;          // 연금술 강화
+  POTION_FORTIFY_ENCHANTING = 5;       // 마법부여 강화
+  POTION_FORTIFY_SMITHING = 6;         // 제련 강화
+  POTION_RESIST_FIRE = 7;              // 화염 저항
+  POTION_RESIST_FROST = 8;             // 냉기 저항
+  POTION_RESIST_SHOCK = 9;             // 전격 저항
+  POTION_RESIST_MAGIC = 10;            // 마법 저항
+  POTION_CURE_DISEASE = 11;            // 질병 치료
+  POTION_CURE_POISON = 12;             // 독 치료
+  POTION_INVISIBILITY = 13;            // 투명화
+  POTION_POISON = 14;                  // 무기용 독 (Detrimental)
+  POTION_OTHER = 15;                   // 기타 버프
+}
+
+message PotionEntry {
+  uint32 form_id = 1;                  // 포션 FormID (ALCH)
+  string name = 2;                     // 포션 이름
+  int32 count = 3;                     // 보유 수량
+  PotionCategory category = 4;         // 포션 분류
+  bool is_poison = 5;                  // 독 여부 (Detrimental)
+  double primary_magnitude = 6;        // 대표 효과 위력
+  int32 primary_duration = 7;          // 대표 효과 지속시간 (초)
+  repeated EffectSlot effects = 8;     // 포함된 모든 효과 목록
+  double weight = 9;                   // 무게
+  int32 value = 10;                    // 가치
+  string description = 11;             // 설명
+}
+
+// ----------------------------------------------------------------------------
+// [NEW: 도메인: 장비 세팅 핫키 프리셋]
+// ----------------------------------------------------------------------------
+enum EquipSlot {
+  EQUIP_SLOT_NONE = 0;
+  EQUIP_SLOT_HEAD = 1;                 // 투구 / 서클릿 / 모자
+  EQUIP_SLOT_BODY = 2;                 // 갑옷 / 로브 / 의복
+  EQUIP_SLOT_HANDS = 3;                // 건틀릿 / 장갑
+  EQUIP_SLOT_FEET = 4;                 // 부츠 / 신발
+  EQUIP_SLOT_SHIELD = 5;               // 방패
+  EQUIP_SLOT_AMULET = 6;               // 목걸이 / 부적
+  EQUIP_SLOT_RING = 7;                 // 반지
+  EQUIP_SLOT_RIGHT_HAND = 8;           // 오른손 무기 / 지팡이
+  EQUIP_SLOT_LEFT_HAND = 9;            // 왼손 무기 / 지팡이
+  EQUIP_SLOT_TWO_HAND = 10;            // 양손 무기 / 활 / 석궁
+  EQUIP_SLOT_AMMO = 11;                // 화살 / 볼트
+  EQUIP_SLOT_BACKPACK = 12;            // 백팩 / 망토 (모드 호환용)
+}
+
+message LoadoutItem {
+  uint32 form_id = 1;                  // 장비 FormID
+  EquipSlot slot = 2;                  // 착용할 슬롯
+  string name = 3;                     // 아이템 이름
+  int32 temper_level = 4;              // 강화 등급
+  repeated uint32 enchantment_ids = 5; // 마법부여 효과 FormID 목록
+}
+
+message EquipmentLoadout {
+  uint32 hotkey_index = 1;             // 핫키 번호 (1~8, 0이면 핫키 미지정 프리셋)
+  string loadout_id = 2;               // 프리셋 식별자 (예: "set_alchemy", "hotkey_1")
+  string name = 3;                     // 프리셋 이름 (예: "연금술 극대화 세팅", "전투/중갑 세팅")
+  string icon = 4;                     // 앱 UI용 아이콘 식별자 (예: "alchemy", "shield", "bow")
+  repeated LoadoutItem items = 5;      // 장비 구성 목록
+  bool unequip_others = 6;             // 세팅에 명시되지 않은 기존 부위 장비를 벗을지 여부
 }
 
 // ============================================================================
-// 3. 실시간 플레이어 제작 스탯 & 퍽 (삼신기 통합)
+// 3. 실시간 플레이어 상태 (제작 스탯 & 생체 수치 & 장착 현황)
 // ============================================================================
 message PlayerCraftingStats {
   string character_name = 1;
@@ -173,7 +320,7 @@ message PlayerCraftingStats {
   bool poisoner = 7;                   // Poisoner 퍽
   bool purity = 8;                     // Purity 퍽
 
-  // --- [마법부여 스탯] (NEW) ---
+  // --- [마법부여 스탯] ---
   int32 enchanting_level = 10;         // 마법부여 스킬 레벨
   int32 fortify_enchanting_total = 11; // 마법부여 강화 포션 버프 (%)
   int32 enchanter_rank = 12;           // Enchanter 퍽 랭크 (0 ~ 5)
@@ -184,7 +331,7 @@ message PlayerCraftingStats {
   bool frost_enchanter = 17;
   bool storm_enchanter = 18;
 
-  // --- [제련 스탯] (NEW) ---
+  // --- [제련 스탯] ---
   int32 smithing_level = 20;           // 제련 스킬 레벨
   int32 fortify_smithing_total = 21;   // 제련 강화 장비+포션 버프 (%)
   bool arcane_blacksmith = 22;         // Arcane Blacksmith (마법 장비 강화 가능)
@@ -201,6 +348,48 @@ message PlayerAlchemyStats {
   bool physician = 6;
   bool poisoner = 7;
   bool purity = 8;
+}
+
+// ----------------------------------------------------------------------------
+// [NEW: 플레이어 생체 수치 & 활성 버프]
+// ----------------------------------------------------------------------------
+message PlayerVitalsUpdate {
+  float current_health = 1;            // 현재 체력
+  float max_health = 2;                // 최대 체력
+  float current_magicka = 3;           // 현재 매지카
+  float max_magicka = 4;               // 최대 매지카
+  float current_stamina = 5;           // 현재 스태미나
+  float max_stamina = 6;               // 최대 스태미나
+  bool is_in_combat = 7;               // 전투 중 여부
+  repeated ActiveBuffEntry active_buffs = 8; // 현재 적용 중인 포션/마법 버프 목록
+}
+
+message ActiveBuffEntry {
+  uint32 mgef_form_id = 1;             // 효과 MGEF FormID
+  string name = 2;                     // 효과 이름
+  float magnitude = 3;                 // 위력
+  float time_remaining = 4;            // 남은 시간 (초)
+  float total_duration = 5;            // 총 지속시간 (초)
+  bool is_beneficial = 6;              // 이로운 효과 여부
+}
+
+// ----------------------------------------------------------------------------
+// [NEW: 실시간 장비 핫키 프리셋 목록 및 활성 세팅 상태]
+// ----------------------------------------------------------------------------
+message ActiveLoadoutsUpdate {
+  uint32 active_hotkey = 1;            // 현재 활성화된 핫키 인덱스 (0이면 비활성)
+  string active_loadout_id = 2;        // 현재 활성화된 세팅 ID
+  repeated EquipmentLoadout loadouts = 3; // 등록된 프리셋 목록
+}
+
+// ----------------------------------------------------------------------------
+// [NEW: 실시간 장착 마법 & 포효 상태]
+// ----------------------------------------------------------------------------
+message EquippedSpellsUpdate {
+  uint32 left_hand_spell_id = 1;       // 왼손 장착 마법 FormID (0이면 무기/비어있음)
+  uint32 right_hand_spell_id = 2;      // 오른손 장착 마법 FormID (0이면 무기/비어있음)
+  uint32 voice_power_form_id = 3;      // 포효/파워 슬롯 장착 FormID
+  float voice_cooldown_remaining = 4;  // 포효 재사용 대기시간 남은 초 (0이면 준비 완료)
 }
 
 // ============================================================================
@@ -222,13 +411,13 @@ message CraftingBenchState {
   // [연금술] 선택된 재료 FormID 목록 (0~3개)
   repeated uint32 selected_form_ids = 3;
 
-  // [마법부여] 선택된 아이템, 인챈트 효과(1~2개), 소울젬 (NEW)
+  // [마법부여] 선택된 아이템, 인챈트 효과(1~2개), 소울젬
   uint32 selected_item_form_id = 10;
   repeated uint32 selected_effect_form_ids = 11;
   uint32 selected_soul_gem_form_id = 12;
   float selected_magnitude_slider = 13;
 
-  // [제련] 선택된 레시피 또는 강화 대상 장비 (NEW)
+  // [제련] 선택된 레시피 또는 강화 대상 장비
   uint32 selected_recipe_form_id = 20;
 }
 
@@ -253,7 +442,8 @@ message CommandResult {
   uint64 request_id = 1;               // AppCommandPacket.request_id와 매칭
   bool success = 2;
   int32 crafted_count = 3;             // 실제 제조/강화 완료 수량
-  string error_code = 4;               // "BENCH_CLOSED", "OUT_OF_STOCK", "INVALID_RECIPE" 등
+  string error_code = 4;               // 에러 코드 (예: "BENCH_CLOSED", "OUT_OF_STOCK", "SPELL_NOT_FOUND", "COOLDOWN")
+  string message = 5;                  // [NEW] 사람이 읽을 수 있는 상세 결과 메시지
 }
 
 // ============================================================================
@@ -264,20 +454,37 @@ message AppCommandPacket {
   uint64 request_id = 2;
 
   oneof command {
-    // [연금술]
+    // --- [연금술] ---
     SelectIngredientsCommand select_ingredients = 10;
     CraftPotionCommand craft_potion = 11;
 
-    // [마법부여] (NEW)
+    // --- [마법부여] ---
     CraftEnchantmentCommand craft_enchantment = 20;
     DisenchantItemCommand disenchant_item = 21;
 
-    // [제련] (NEW)
+    // --- [제련] ---
     CraftSmithingCommand craft_smithing = 30;
     TemperEquipmentCommand temper_equipment = 31;
+
+    // --- [NEW: 물약 마시기 & 독 바르기] ---
+    DrinkPotionCommand drink_potion = 40;
+    ApplyPoisonCommand apply_poison = 41;
+
+    // --- [NEW: 장비 세팅 & 핫키] ---
+    ApplyLoadoutCommand apply_loadout = 50;
+    SaveLoadoutCommand save_loadout = 51;
+    EquipItemCommand equip_item = 52;
+
+    // --- [NEW: 마법 시전 & 장착] ---
+    CastSpellCommand cast_spell = 60;
+    EquipSpellCommand equip_spell = 61;
+    EquipShoutCommand equip_shout = 62;
   }
 }
 
+// ----------------------------------------------------------------------------
+// [연금술 명령]
+// ----------------------------------------------------------------------------
 message SelectIngredientsCommand {
   repeated uint32 form_ids = 1;
 }
@@ -287,7 +494,9 @@ message CraftPotionCommand {
   int32 count = 2;
 }
 
+// ----------------------------------------------------------------------------
 // [마법부여 명령]
+// ----------------------------------------------------------------------------
 message CraftEnchantmentCommand {
   uint32 item_form_id = 1;             // 부여할 장비 FormID
   repeated uint32 effect_form_ids = 2; // 부여할 효과 (1~2개)
@@ -300,7 +509,9 @@ message DisenchantItemCommand {
   uint32 item_form_id = 1;             // 마법 추출(분해)할 장비 FormID
 }
 
+// ----------------------------------------------------------------------------
 // [제련 명령]
+// ----------------------------------------------------------------------------
 message CraftSmithingCommand {
   uint32 cobj_form_id = 1;             // 제작할 레시피 (COBJ) FormID
   int32 count = 2;                     // 제작 수량
@@ -308,4 +519,67 @@ message CraftSmithingCommand {
 
 message TemperEquipmentCommand {
   uint32 equipment_form_id = 1;        // 숫돌/작업대에서 강화할 장비 FormID
+}
+
+// ----------------------------------------------------------------------------
+// [NEW: 물약 명령]
+// ----------------------------------------------------------------------------
+message DrinkPotionCommand {
+  uint32 potion_form_id = 1;           // 마실 포션 FormID (0이면 quick_category 기준 최적 포션 자동 선택)
+  PotionCategory quick_category = 2;   // 빠른 물약 마시기 분류 (예: POTION_RESTORE_HEALTH)
+  int32 count = 3;                     // 마실 수량 (기본 1)
+}
+
+message ApplyPoisonCommand {
+  uint32 poison_form_id = 1;           // 바를 독 FormID
+  EquipSlot target_slot = 2;           // 바를 무기 슬롯 (EQUIP_SLOT_RIGHT_HAND 또는 EQUIP_SLOT_LEFT_HAND)
+}
+
+// ----------------------------------------------------------------------------
+// [NEW: 장비 세팅 & 핫키 명령]
+// ----------------------------------------------------------------------------
+message ApplyLoadoutCommand {
+  uint32 hotkey_index = 1;             // 핫키 번호로 적용 (1~8)
+  string loadout_id = 2;               // 또는 세팅 고유 ID로 적용
+  EquipmentLoadout custom_loadout = 3; // 또는 앱에서 전송한 커스텀 세팅 즉시 일괄 착용
+}
+
+message SaveLoadoutCommand {
+  uint32 hotkey_index = 1;             // 저장할 핫키 번호 (1~8)
+  string loadout_id = 2;               // 프리셋 ID
+  string name = 3;                     // 프리셋 이름
+  bool capture_current_equipped = 4;   // true면 현재 플레이어가 착용한 장비들을 캡처하여 저장
+  repeated LoadoutItem items = 5;      // capture_current_equipped=false일 때 지정할 아이템 목록
+}
+
+message EquipItemCommand {
+  uint32 form_id = 1;                  // 장비 아이템 FormID
+  EquipSlot slot = 2;                  // 착용할 슬롯 (EQUIP_SLOT_NONE이면 기본 슬롯에 장착)
+  bool is_unequip = 3;                 // false: 착용(Equip), true: 해제(Unequip)
+}
+
+// ----------------------------------------------------------------------------
+// [NEW: 마법 시전 & 장착 명령]
+// ----------------------------------------------------------------------------
+enum HandSlot {
+  HAND_SLOT_LEFT = 0;                  // 왼손
+  HAND_SLOT_RIGHT = 1;                 // 오른손
+  HAND_SLOT_BOTH = 2;                  // 양손 (Dual Equip)
+  HAND_SLOT_VOICE = 3;                 // 포효 / 파워 슬롯
+}
+
+message CastSpellCommand {
+  uint32 spell_form_id = 1;            // 시전할 마법 FormID
+  HandSlot hand_slot = 2;              // 시전할 손 슬롯
+  bool instant_cast = 3;               // true: 원격 즉시 발동/시전, false: 해당 손에 장착만
+  uint32 target_actor_id = 4;          // 지정 타겟 FormID (0이면 시전자 또는 기본 조준선)
+}
+
+message EquipSpellCommand {
+  uint32 spell_form_id = 1;            // 장착할 마법 FormID
+  HandSlot hand_slot = 2;              // 장착할 손 (HAND_SLOT_LEFT, HAND_SLOT_RIGHT, HAND_SLOT_BOTH)
+}
+
+message EquipShoutCommand {
+  uint32 shout_form_id = 1;            // 장착할 포효 FormID
 }
