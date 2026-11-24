@@ -1,4 +1,5 @@
 #include "Pch.h"
+#include "Config.h"
 #include "server/WebSocketServer.h"
 #include "game/AlchemyController.h"
 #include "game/InventoryExtractor.h"
@@ -40,10 +41,14 @@ namespace {
 
         switch (a_msg->type) {
         case SKSE::MessagingInterface::kDataLoaded:
-            SKSE::log::info("Skyrim data loaded. Starting SkyPotion WebSocket server on port 47778...");
-            SkyPotion::Server::WebSocketServer::GetSingleton().Start(47778, "0.0.0.0");
-            SkyPotion::Game::MenuOpenCloseHandler::GetSingleton()->Register();
-            SkyPotion::Game::InventoryEventHandler::GetSingleton()->Register();
+            {
+                const auto& config = SkyPotion::Config::GetSingleton();
+                SKSE::log::info("Skyrim data loaded. Starting SkyPotion WebSocket server on {}:{}...",
+                    config.GetBindAddress(), config.GetPort());
+                SkyPotion::Server::WebSocketServer::GetSingleton().Start(config.GetPort(), config.GetBindAddress());
+                SkyPotion::Game::MenuOpenCloseHandler::GetSingleton()->Register();
+                SkyPotion::Game::InventoryEventHandler::GetSingleton()->Register();
+            }
             break;
 
         case SKSE::MessagingInterface::kPreLoadGame:
@@ -67,6 +72,7 @@ namespace {
 
 SKSEPluginLoad(const SKSE::LoadInterface* a_skse) {
     InitializeLogging();
+    SkyPotion::Config::GetSingleton().Load();
 
     SKSE::Init(a_skse);
 

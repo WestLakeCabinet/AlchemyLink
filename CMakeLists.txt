@@ -68,6 +68,8 @@ protobuf_generate(
 add_library(
     ${PROJECT_NAME} SHARED
     src/Pch.h
+    src/Config.h
+    src/Config.cpp
     src/main.cpp
     src/server/WebSocketServer.h
     src/server/WebSocketServer.cpp

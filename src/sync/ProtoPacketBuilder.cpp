@@ -1,8 +1,23 @@
 #include "sync/ProtoPacketBuilder.h"
+#include <RE/G/GameSettingCollection.h>
 #include <chrono>
 #include <map>
 
 namespace SkyPotion::Sync {
+
+namespace {
+    std::string ResolveGameSettingString(const char* a_name, const std::string& a_fallback) {
+        auto* gmst = RE::GameSettingCollection::GetSingleton();
+        if (gmst) {
+            if (auto* setting = gmst->GetSetting(a_name)) {
+                if (const char* str = setting->GetString()) {
+                    return str;
+                }
+            }
+        }
+        return a_fallback;
+    }
+}
 
 int64_t ProtoPacketBuilder::NowMs() {
     using namespace std::chrono;
@@ -113,6 +128,8 @@ std::string ProtoPacketBuilder::BuildCatalogSnapshot() {
     auto* snapshot = packet.mutable_catalog_snapshot();
     snapshot->set_character_name(ResolvePlayerName(player));
     snapshot->set_game_language(ResolveGameLanguage());
+    snapshot->set_potion_prefix(ResolveGameSettingString("sCreatedPotionNamePrefix", "Potion of "));
+    snapshot->set_poison_prefix(ResolveGameSettingString("sCreatedPoisonNamePrefix", "Poison of "));
     FillPlayerAlchemyStats(snapshot->mutable_initial_stats());
 
     // 현재 인벤토리 재료 수량 맵 (1회 순회)

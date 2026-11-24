@@ -41,6 +41,10 @@ message CatalogSnapshot {
 
   // 초기 접속 시점의 플레이어 스탯과 재고를 한 번에 포함 가능
   PlayerAlchemyStats initial_stats = 6;
+
+  // 게임 설정 접두사 (GMST)
+  string potion_prefix = 7;             // 제작 포션 이름 접두사 (GMST: sCreatedPotionNamePrefix)
+  string poison_prefix = 8;             // 제작 독 이름 접두사 (GMST: sCreatedPoisonNamePrefix)
 }
 
 message BaseEffectDef {
