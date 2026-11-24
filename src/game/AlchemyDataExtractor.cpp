@@ -154,7 +154,7 @@ namespace SkyPotion::Game {
                 isHarmful = true;
             }
 
-            bool isPhysician = nameStr.find("Restore") != std::string::npos || nameStr.find("restore") != std::string::npos;
+            bool isPhysician = keywordsStr.find("Restore") != std::string::npos || keywordsStr.find("restore") != std::string::npos;
             const char* desc = mgef->magicItemDescription.c_str();
 
             baseEffectsJson.push_back({
