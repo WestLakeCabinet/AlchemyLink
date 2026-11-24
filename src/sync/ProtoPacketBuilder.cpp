@@ -82,7 +82,7 @@ double ProtoPacketBuilder::GetTotalFortifyAlchemy(RE::PlayerCharacter* player) {
     return static_cast<double>(avOwner->GetActorValue(RE::ActorValue::kAlchemyModifier));
 }
 
-void ProtoPacketBuilder::FillPlayerAlchemyStats(pb::PlayerAlchemyStats* out) {
+void ProtoPacketBuilder::FillPlayerAlchemyStats(pb::PlayerCraftingStats* out) {
     if (!out || !Util::IsGameSessionReady()) return;
 
     auto* player = RE::PlayerCharacter::GetSingleton();

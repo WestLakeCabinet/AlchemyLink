@@ -4,152 +4,308 @@ package com.dolzzo.skypotion.proto.sync;
 
 option java_package = "com.dolzzo.skypotion.proto.sync";
 
-// 모든 게임 -> 앱 통신의 최상위 래퍼 패킷
 // ============================================================================
-// [Game -> App] 기존 GameSyncPacket의 oneof payload에 2개 추가
+// [Game -> App] 모든 게임 -> 앱 통신의 최상위 래퍼 패킷
 // ============================================================================
 message GameSyncPacket {
   uint32 protocol_version = 1;
   int64 timestamp_ms = 2;
 
   oneof payload {
+    // 마스터 데이터 (초기 접속 / 세이브 로드 시)
     CatalogSnapshot catalog_snapshot = 10;
+
+    // 실시간 인벤토리 업데이트 (재료, 소울젬, 스미싱 재료, 장비)
     InventoryUpdate inventory_update = 11;
-    PlayerAlchemyStats player_stats = 12;
+
+    // 플레이어 제작 스탯 & 퍽 (연금술 / 인챈팅 / 스미싱)
+    PlayerCraftingStats player_stats = 12;
+
+    // 실시간 연금술 효과 해금 마스크 (하위 호환)
     DiscoveredEffectsUpdate discovered = 13;
+
+    // 연결 유지 핑/퐁
     Heartbeat heartbeat = 14;
 
-    AlchemyBenchState bench_state = 15;          // NEW: 연금술대 열림/닫힘 & 선택 재료
-    CommandResult command_result = 16;           // NEW: 앱 명령 실행 결과 응답
+    // 실시간 작업대 상태 (연금술대 / 인챈트대 / 대장간 / 숫돌 / 작업대)
+    CraftingBenchState bench_state = 15;
+
+    // 앱 명령 실행 결과 응답
+    CommandResult command_result = 16;
   }
 }
 
 // ============================================================================
-// 1. 초기 접속 시 마스터 데이터 (첨부 CSV 구조 + 모드 환경 대응)
+// 1. 초기 접속 시 마스터 데이터 (카탈로그 스냅샷)
 // ============================================================================
 message CatalogSnapshot {
   string session_id = 1;                // 세이브/세션 식별자
-  string character_name = 2;            // 현재 로드된 캐릭터 이름 (프로필 매칭용)
-  string game_language = 3;             // 게임 언어 코드 (예: "ko", "en")
+  string character_name = 2;            // 현재 캐릭터 이름
+  string game_language = 3;             // 게임 언어 (예: "ENGLISH", "KOREAN")
 
-  // 모드(Mod)로 추가/수정된 효과가 있을 수 있으므로 BaseEffect 정의도 함께 수신 권장
-  // 비어있으면 앱 기본 Asset CSV의 BaseEffect를 그대로 사용
+  // --- [공통 접두사 (GMST)] ---
+  string potion_prefix = 7;             // GMST: sCreatedPotionNamePrefix (예: "Potion of ")
+  string poison_prefix = 8;             // GMST: sCreatedPoisonNamePrefix (예: "Poison of ")
+
+  // --- [도메인: 연금술] ---
   repeated BaseEffectDef base_effects = 4;
-
-  // 첨부된 CSV(ingredients_updated.csv)와 1:1 매핑되는 재료 목록
   repeated IngredientDef ingredients = 5;
 
-  // 초기 접속 시점의 플레이어 스탯과 재고를 한 번에 포함 가능
-  PlayerAlchemyStats initial_stats = 6;
+  // --- [도메인: 마법부여] (NEW) ---
+  repeated KnownEnchantmentDef known_enchantments = 20; // 플레이어가 분해/습득한 인챈트 효과
 
-  // 게임 설정 접두사 (GMST)
-  string potion_prefix = 7;             // 제작 포션 이름 접두사 (GMST: sCreatedPotionNamePrefix)
-  string poison_prefix = 8;             // 제작 독 이름 접두사 (GMST: sCreatedPoisonNamePrefix)
+  // --- [도메인: 제련] (NEW) ---
+  repeated SmithingRecipeDef smithing_recipes = 30;     // 제작 가능한 대장간 레시피 (COBJ)
+
+  // 초기 접속 시점의 플레이어 제작 스탯
+  PlayerCraftingStats initial_stats = 6;
 }
 
+// ----------------------------------------------------------------------------
+// [도메인: 연금술 마스터 데이터]
+// ----------------------------------------------------------------------------
 message BaseEffectDef {
-  uint32 form_id = 1;          // 32-bit FormID (예: 0x0003EB15)
-  string name = 2;             // 게임 내 표시 이름 (현지화된 이름 포함)
+  uint32 form_id = 1;          // MGEF FormID
+  string name = 2;             // 게임 내 표시 이름
   string description = 3;      // 효과 설명
-  double base_cost = 4;        // 기본 가치(cost)
+  double base_cost = 4;        // 기본 가치 (cost)
   bool no_mag = 5;
   bool no_dur = 6;
   bool affect_mag = 7;
   bool affect_dur = 8;
   bool is_poison = 9;          // Detrimental / Hostile 여부
-  string keywords = 10;        // 콤마 구분 키워드 EditorID 목록 (예: "MagicAlchBeneficial,MagicDamageFire")
+  string keywords = 10;        // 콤마 구분 키워드 (예: "MagicAlchBeneficial,MagicDamageFire")
 }
 
 message IngredientDef {
-  uint32 form_id = 1;          // CSV: FormID (Hex -> uint32)
-  string name = 2;             // CSV: Name (게임 내 현지화 이름 그대로 수신 가능)
-  int32 price = 3;             // CSV: Value
-  double weight = 4;           // CSV: Weight
-  int32 effect_value = 5;  // CSV: Ingredient Value (effectValue)
-  repeated EffectSlot slots = 6; // CSV: E1~E4, Mag1~4, Dur1~4 (최대 4개)
-  string origin = 7;           // CSV: FileName (예: "Skyrim.esm", "Dawnguard.esm", 모드 esp명)
-  int32 current_stock = 8;     // CSV: default_stock 위치 -> 실제 플레이어 인벤토리 초기 수량
-  uint32 discovered_mask = 9;  // 4비트 마스크 (0x00 ~ 0x0F, 해금된 효과 슬롯)
+  uint32 form_id = 1;          // INGR FormID
+  string name = 2;             // 재료 이름
+  int32 price = 3;             // 기본 가치
+  double weight = 4;           // 무게
+  int32 effect_value = 5;      // Ingredient Value
+  repeated EffectSlot slots = 6; // 4개 효과 슬롯
+  string origin = 7;           // 모드/모듈 파일명 ("Skyrim.esm" 등)
+  int32 current_stock = 8;     // 초기 인벤토리 수량
+  uint32 discovered_mask = 9;  // 4비트 해금 마스크 (0x00~0x0F)
 }
 
 message EffectSlot {
-  uint32 form_id = 1;          // 효과 FormID
-  double magnitude = 2;        // Mag
-  int32 duration = 3;          // Dur
+  uint32 form_id = 1;          // MGEF FormID
+  double magnitude = 2;        // 위력
+  int32 duration = 3;          // 지속시간
+}
+
+// ----------------------------------------------------------------------------
+// [도메인: 마법부여 마스터 데이터] (NEW)
+// ----------------------------------------------------------------------------
+message KnownEnchantmentDef {
+  uint32 form_id = 1;                  // Enchantment FormID
+  string name = 2;                     // 인챈트 이름 (예: "Fortify Alchemy")
+  string description = 3;              // 설명
+  bool is_weapon_enchant = 4;          // true: 무기용, false: 방어구/장신구용
+  repeated uint32 compatible_slots = 5;// 부착 가능한 슬롯 플래그 (투구, 갑옷, 건틀릿, 부츠, 목걸이, 반지 등)
+  double base_cost = 6;                // 기본 위력/가치 계산용
+}
+
+// ----------------------------------------------------------------------------
+// [도메인: 제련 마스터 데이터] (NEW)
+// ----------------------------------------------------------------------------
+message SmithingRecipeDef {
+  uint32 cobj_form_id = 1;             // ConstructibleObject (COBJ) FormID
+  uint32 result_form_id = 2;           // 결과물 아이템 FormID
+  string result_name = 3;              // 결과물 이름 (예: "Iron Dagger")
+  int32 result_count = 4;              // 1회 제작 시 수량
+  uint32 required_perk_id = 5;         // 필요 퍽 FormID (0이면 퍽 불필요)
+  repeated RecipeIngredient required_materials = 6; // 필요 재료
+  int32 category = 7;                  // 0: 대장간 제작, 1: 방어구 강화, 2: 무기 강화
+}
+
+message RecipeIngredient {
+  uint32 form_id = 1;                  // 재료 FormID (예: 철 잉곳)
+  int32 count = 2;                     // 필요 수량
 }
 
 // ============================================================================
-// 2. 실시간 재료 재고 업데이트
+// 2. 실시간 인벤토리 동기화
 // ============================================================================
 message InventoryUpdate {
-  // true: 플레이어 인벤토리 전체 스냅샷 (목록에 없는 재료는 재고 0 처리)
-  // false: 변동된 재료만 전달 (증분 업데이트)
   bool is_full_snapshot = 1;
-  repeated StockEntry items = 2;
+  repeated StockEntry items = 2;              // [연금술] 재료 재고 (하위 호환)
+  repeated StockEntry smithing_materials = 3; // [스미싱] 잉곳, 광석, 가죽, 뼈 등
+  repeated SoulGemEntry soul_gems = 4;        // [인챈팅] 소울젬 (충전 상태 포함)
+  repeated EquipmentEntry equipment = 5;      // [인챈팅/스미싱] 보유 장비 (강화/인챈트 대상)
 }
 
 message StockEntry {
   uint32 form_id = 1;
-  int32 count = 2;             // 절대 수량 (증감치보다 절대 수량이 패킷 유실 시 복구에 안전)
+  int32 count = 2;
+}
+
+message SoulGemEntry {
+  uint32 form_id = 1;
+  string name = 2;
+  int32 capacity_level = 3;            // 소울젬 최대 크기 (1:Petty ~ 5:Grand)
+  int32 contained_soul_level = 4;      // 현재 충전된 영혼 크기 (0:Empty, 1:Petty ~ 5:Grand)
+  int32 count = 5;
+}
+
+message EquipmentEntry {
+  uint32 form_id = 1;
+  string name = 2;
+  int32 count = 3;
+  int32 temper_level = 4;              // 강화 등급 (0:None, 1:Fine, 2:Superior, 3:Flawless, 4:Epic, 5:Legendary)
+  bool is_enchanted = 5;               // 이미 마법부여가 되어 있는지 여부
+  repeated uint32 enchantment_ids = 6; // 적용된 인챈트 FormID들
 }
 
 // ============================================================================
-// 3. 실시간 플레이어 연금술 스탯 & 퍽
+// 3. 실시간 플레이어 제작 스탯 & 퍽 (삼신기 통합)
 // ============================================================================
+message PlayerCraftingStats {
+  string character_name = 1;
+
+  // --- [연금술 스탯] ---
+  int32 skill_level = 2;               // 연금술 스킬 레벨 (하위 호환 유지)
+  int32 fortify_alchemy_total = 3;     // 연금술 강화 장비/버프 총합 (%)
+  int32 alchemist_rank = 4;            // Alchemist 퍽 랭크 (0 ~ 5)
+  bool benefactor = 5;                 // Benefactor 퍽
+  bool physician = 6;                  // Physician 퍽
+  bool poisoner = 7;                   // Poisoner 퍽
+  bool purity = 8;                     // Purity 퍽
+
+  // --- [마법부여 스탯] (NEW) ---
+  int32 enchanting_level = 10;         // 마법부여 스킬 레벨
+  int32 fortify_enchanting_total = 11; // 마법부여 강화 포션 버프 (%)
+  int32 enchanter_rank = 12;           // Enchanter 퍽 랭크 (0 ~ 5)
+  bool insightful_enchanter = 13;      // Insightful Enchanter 퍽 (+25% 스킬 인챈트)
+  bool corpus_enchanter = 14;          // Corpus Enchanter 퍽 (+25% 능력치 인챈트)
+  bool extra_effect = 15;              // Extra Effect 퍽 (효과 2개 동시 부여)
+  bool fire_enchanter = 16;
+  bool frost_enchanter = 17;
+  bool storm_enchanter = 18;
+
+  // --- [제련 스탯] (NEW) ---
+  int32 smithing_level = 20;           // 제련 스킬 레벨
+  int32 fortify_smithing_total = 21;   // 제련 강화 장비+포션 버프 (%)
+  bool arcane_blacksmith = 22;         // Arcane Blacksmith (마법 장비 강화 가능)
+  uint32 smithing_perks_mask = 23;     // 비트마스크: Steel, Elven, Dwarven, Orcish, Advanced, Glass, Ebony, Daedric, Dragon
+}
+
+// 하위 호환용 alias 메시지 (기존 C++ 빌드 완벽 보장)
 message PlayerAlchemyStats {
   string character_name = 1;
-  int32 skill_level = 2;          // 연금술 스킬 레벨 (기본 15~100+)
-  int32 fortify_alchemy_total = 3;// 장비/버프 등 Fortify Alchemy 효과 총합 (%)
-  int32 alchemist_rank = 4;       // Alchemist 퍽 랭크 (0 ~ 5)
-  bool benefactor = 5;            // Benefactor 퍽 보유 여부
-  bool physician = 6;             // Physician 퍽 보유 여부
-  bool poisoner = 7;              // Poisoner 퍽 보유 여부
-  bool purity = 8;                // Purity 퍽 보유 여부
+  int32 skill_level = 2;
+  int32 fortify_alchemy_total = 3;
+  int32 alchemist_rank = 4;
+  bool benefactor = 5;
+  bool physician = 6;
+  bool poisoner = 7;
+  bool purity = 8;
 }
 
 // ============================================================================
-// 4. 기타 실시간 이벤트
+// 4. 실시간 작업대 상태 (CraftingBenchState)
+// ============================================================================
+enum BenchType {
+  BENCH_NONE = 0;
+  BENCH_ALCHEMY = 1;                   // 연금술대 (CraftingSubMenus::AlchemyMenu)
+  BENCH_ENCHANTING = 2;                // 마법부여대 (CraftingSubMenus::EnchantConstructMenu)
+  BENCH_SMITHING_FORGE = 3;            // 대장간 / 모루 (제작)
+  BENCH_SMITHING_WORKBENCH = 4;        // 방어구 작업대 (강화)
+  BENCH_SMITHING_GRINDSTONE = 5;       // 무기 숫돌 (강화)
+}
+
+message CraftingBenchState {
+  BenchType bench_type = 1;            // 활성화된 작업대 종류
+  bool is_open = 2;                    // 작업대 UI 열림 여부
+
+  // [연금술] 선택된 재료 FormID 목록 (0~3개)
+  repeated uint32 selected_form_ids = 3;
+
+  // [마법부여] 선택된 아이템, 인챈트 효과(1~2개), 소울젬 (NEW)
+  uint32 selected_item_form_id = 10;
+  repeated uint32 selected_effect_form_ids = 11;
+  uint32 selected_soul_gem_form_id = 12;
+  float selected_magnitude_slider = 13;
+
+  // [제련] 선택된 레시피 또는 강화 대상 장비 (NEW)
+  uint32 selected_recipe_form_id = 20;
+}
+
+// 하위 호환용 AlchemyBenchState (기존 C++ 빌드 완벽 보장)
+message AlchemyBenchState {
+  bool is_open = 1;
+  repeated uint32 selected_form_ids = 2;
+}
+
+// ============================================================================
+// 5. 기타 실시간 이벤트 및 응답
 // ============================================================================
 message DiscoveredEffectsUpdate {
-  map<uint32, uint32> discovered_masks = 1; // form_id -> 4-bit mask (0x00~0x0F)
+  map<uint32, uint32> discovered_masks = 1; // form_id -> 4-bit mask
 }
 
 message Heartbeat {
   int64 seq = 1;
 }
 
-
-
-message AlchemyBenchState {
-  bool is_open = 1;                              // 연금술대 메뉴 활성화 여부
-  repeated uint32 selected_form_ids = 2;         // 현재 게임 연금술대에서 선택된 재료 (0~3개)
-}
-
 message CommandResult {
-  uint64 request_id = 1;                         // AppCommandPacket.request_id와 매칭
+  uint64 request_id = 1;               // AppCommandPacket.request_id와 매칭
   bool success = 2;
-  int32 crafted_count = 3;                       // 실제 제조 완료된 수량
-  string error_code = 4;                         // "BENCH_CLOSED", "OUT_OF_STOCK", "INVALID_RECIPE" 등
+  int32 crafted_count = 3;             // 실제 제조/강화 완료 수량
+  string error_code = 4;               // "BENCH_CLOSED", "OUT_OF_STOCK", "INVALID_RECIPE" 등
 }
 
 // ============================================================================
-// [App -> Game] 앱에서 게임으로 보내는 제어 패킷
+// [App -> Game] 앱에서 게임으로 보내는 제어 명령 패킷
 // ============================================================================
 message AppCommandPacket {
   uint32 protocol_version = 1;
-  uint64 request_id = 2;                         // 응답 매칭용 고유 ID (AtomicLong)
+  uint64 request_id = 2;
 
   oneof command {
-    SelectIngredientsCommand select_ingredients = 10; // 재료 선택/해제 동기화
-    CraftPotionCommand craft_potion = 11;             // 포션 제조 요청
+    // [연금술]
+    SelectIngredientsCommand select_ingredients = 10;
+    CraftPotionCommand craft_potion = 11;
+
+    // [마법부여] (NEW)
+    CraftEnchantmentCommand craft_enchantment = 20;
+    DisenchantItemCommand disenchant_item = 21;
+
+    // [제련] (NEW)
+    CraftSmithingCommand craft_smithing = 30;
+    TemperEquipmentCommand temper_equipment = 31;
   }
 }
 
 message SelectIngredientsCommand {
-  repeated uint32 form_ids = 1;                  // 0개(전체 해제) ~ 최대 3개
+  repeated uint32 form_ids = 1;
 }
 
 message CraftPotionCommand {
-  repeated uint32 form_ids = 1;                  // 제조할 재료 2~3개
-  int32 count = 2;                               // 제조 수량 (1 또는 maxCount)
+  repeated uint32 form_ids = 1;
+  int32 count = 2;
+}
+
+// [마법부여 명령]
+message CraftEnchantmentCommand {
+  uint32 item_form_id = 1;             // 부여할 장비 FormID
+  repeated uint32 effect_form_ids = 2; // 부여할 효과 (1~2개)
+  uint32 soul_gem_form_id = 3;         // 소모할 소울젬 FormID
+  string custom_name = 4;              // 완성 장비의 커스텀 이름
+  float magnitude_slider = 5;          // 위력 vs 충전량 슬라이더 (0.0 ~ 1.0)
+}
+
+message DisenchantItemCommand {
+  uint32 item_form_id = 1;             // 마법 추출(분해)할 장비 FormID
+}
+
+// [제련 명령]
+message CraftSmithingCommand {
+  uint32 cobj_form_id = 1;             // 제작할 레시피 (COBJ) FormID
+  int32 count = 2;                     // 제작 수량
+}
+
+message TemperEquipmentCommand {
+  uint32 equipment_form_id = 1;        // 숫돌/작업대에서 강화할 장비 FormID
 }
