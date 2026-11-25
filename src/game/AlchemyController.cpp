@@ -325,7 +325,30 @@ namespace SkyPotion::Game {
 
         auto* movie = craftingMenu ? craftingMenu->uiMovie.get() : (alchemyMenu->view ? alchemyMenu->view.get() : nullptr);
 
-        // 1. Scaleform 리스트에서 해당 C++ 인덱스에 대응하는 화면 표시 인덱스(displayIdx) 탐색
+        // 1. FxDelegate 직접 호출 우선 (SetSelectedItem -> ChooseItem)
+        // Scaleform 리스트의 스크롤/표시 인덱스(displayIdx) 불일치 및 onItemSelect+onItemPress 이중 토글 방지
+        if (craftingMenu && craftingMenu->fxDelegate) {
+            auto invokeDelegate = [&](const char* name, double argVal) -> bool {
+                if (auto* defn = craftingMenu->fxDelegate->callbacks.Get(name)) {
+                    if (defn->callback && defn->handler) {
+                        RE::GFxValue arg(argVal);
+                        RE::FxDelegateArgs cbArgs(RE::GFxValue(), defn->handler.get(), movie, &arg, 1);
+                        defn->callback(cbArgs);
+                        return true;
+                    }
+                }
+                return false;
+            };
+
+            invokeDelegate("SetSelectedItem", static_cast<double>(cppIdx));
+            invokeDelegate("ChooseItem", static_cast<double>(cppIdx));
+
+            if (isToggled()) {
+                return true;
+            }
+        }
+
+        // 2. FxDelegate로 토글되지 않은 경우 Scaleform 리스트 이벤트 폴백 (각 호출마다 isToggled 확인)
         std::int32_t displayIdx = FindDisplayIndexForCppIndex(targetList, cppIdx, formId, ingredientName);
         if (displayIdx >= 0) {
             RE::GFxValue prevDisableInput;
@@ -343,14 +366,17 @@ namespace SkyPotion::Game {
             RE::GFxValue indexVal(static_cast<double>(displayIdx));
             targetList.SetMember("selectedIndex", indexVal);
 
-            // 1a. 바닐라 BSScrollingList / SkyUI ScrollingList
+            // 2a. 바닐라 BSScrollingList / SkyUI ScrollingList
             RE::GFxValue args[2];
             args[0] = static_cast<double>(displayIdx);
             args[1] = 0.0;
-            targetList.Invoke("onItemSelect", nullptr, args, 1);
             targetList.Invoke("onItemPress", nullptr, args, 2);
 
-            // 1b. SkyUI InventoryLists.onItemSelect(cppIdx)
+            if (!isToggled()) {
+                targetList.Invoke("onItemSelect", nullptr, args, 1);
+            }
+
+            // 2b. SkyUI InventoryLists.onItemSelect(cppIdx)
             if (!isToggled() && movie) {
                 RE::GFxValue cppArg(static_cast<double>(cppIdx));
                 movie->Invoke("_root.Menu.InventoryLists.onItemSelect", nullptr, &cppArg, 1);
@@ -359,7 +385,7 @@ namespace SkyPotion::Game {
                 }
             }
 
-            // 1c. SkyUI EventDispatcher itemPress 이벤트 직접 디스패치
+            // 2c. SkyUI EventDispatcher itemPress 이벤트 직접 디스패치
             if (!isToggled() && movie) {
                 RE::GFxValue listArray;
                 RE::GFxValue entryObj;
@@ -389,39 +415,17 @@ namespace SkyPotion::Game {
             }
         }
 
-        // 2. SkyUI 카테고리/검색 필터로 화면에 없거나 Scaleform 이벤트가 동작하지 않은 경우 FxDelegate 직접 호출
         if (!isToggled() && craftingMenu && craftingMenu->fxDelegate) {
-            auto tryCallback = [&](const char* name, double argIndex) -> bool {
-                if (auto* defn = craftingMenu->fxDelegate->callbacks.Get(name)) {
-                    if (defn->callback && defn->handler) {
-                        auto* movie = craftingMenu->uiMovie.get();
-                        RE::GFxValue arg(argIndex);
-                        RE::FxDelegateArgs cbArgs(RE::GFxValue(), defn->handler.get(), movie, &arg, 1);
-                        defn->callback(cbArgs);
-                        return (alchemyMenu->ingredientEntries[cppIdx].isSelected != 0) != wasSelected;
-                    }
+            static bool s_loggedCallbacks = false;
+            if (!s_loggedCallbacks) {
+                s_loggedCallbacks = true;
+                std::string keys;
+                for (auto it = craftingMenu->fxDelegate->callbacks.begin(); it != craftingMenu->fxDelegate->callbacks.end(); ++it) {
+                    if (!keys.empty()) keys += ", ";
+                    keys += it->first.c_str();
                 }
-                return false;
-            };
-
-            if (!tryCallback("ChooseIngredient", static_cast<double>(cppIdx))) {
-                if (displayIdx >= 0) {
-                    tryCallback("ItemSelect", static_cast<double>(displayIdx));
-                }
-            }
-
-            if (!isToggled()) {
-                static bool s_loggedCallbacks = false;
-                if (!s_loggedCallbacks) {
-                    s_loggedCallbacks = true;
-                    std::string keys;
-                    for (auto it = craftingMenu->fxDelegate->callbacks.begin(); it != craftingMenu->fxDelegate->callbacks.end(); ++it) {
-                        if (!keys.empty()) keys += ", ";
-                        keys += it->first.c_str();
-                    }
-                    SKSE::log::warn("ToggleIngredientEntry: Fallback failed (displayIdx={}, cppIdx={}). Registered FxDelegate callbacks: [{}]",
-                        displayIdx, cppIdx, keys);
-                }
+                SKSE::log::warn("ToggleIngredientEntry: Fallback failed (displayIdx={}, cppIdx={}). Registered FxDelegate callbacks: [{}]",
+                    displayIdx, cppIdx, keys);
             }
         }
 
