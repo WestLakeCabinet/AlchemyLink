@@ -27,7 +27,8 @@ add_compile_definitions(
 find_package(protobuf CONFIG REQUIRED)
 
 find_package(nlohmann_json CONFIG REQUIRED)
-find_package(ixwebsocket CONFIG REQUIRED)
+find_package(boost_beast CONFIG REQUIRED)
+find_package(boost_asio CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
 
 set(PROTO_SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/proto")
@@ -95,10 +96,10 @@ target_link_libraries(
     CommonLibSSE::CommonLibSSE
     skypotion_proto
     nlohmann_json::nlohmann_json
-    ixwebsocket::ixwebsocket
+    Boost::beast
+    Boost::asio
     spdlog::spdlog
     ws2_32
-    crypt32
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE src)

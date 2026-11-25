@@ -6,7 +6,8 @@
   "builtin-baseline": "1de2026f28ead93ff1773e6e680387643e914ea1",
   "dependencies": [
     "nlohmann-json",
-    "ixwebsocket",
+    "boost-beast",
+    "boost-asio",
     "spdlog",
     "rapidcsv",
     "directxtk",

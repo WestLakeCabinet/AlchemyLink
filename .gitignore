@@ -13,3 +13,4 @@ out/
 # Dependencies
 vcpkg_installed/
 project_all.md
+/what_source

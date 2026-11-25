@@ -1,10 +1,10 @@
 #pragma once
 
 #include "Pch.h"
-#include <ixwebsocket/IXWebSocketServer.h>
-#include <ixwebsocket/IXWebSocket.h>
 
 namespace SkyPotion::Server {
+
+    class Session;
 
     class WebSocketServer {
     public:
@@ -28,26 +28,29 @@ namespace SkyPotion::Server {
         void ScheduleSessionSnapshot(int attempt = 0); // 세이브 로드 / 접속 시 준비 대기 및 자동 재시도 스냅샷
 
     private:
+        friend class Session;
+
+        struct Impl;
+
         WebSocketServer();
         ~WebSocketServer();
 
         WebSocketServer(const WebSocketServer&) = delete;
         WebSocketServer& operator=(const WebSocketServer&) = delete;
 
-        void OnMessage(std::shared_ptr<ix::ConnectionState> connectionState,
-                       ix::WebSocket& webSocket,
-                       const ix::WebSocketMessagePtr& msg);
+        void RegisterSession(const std::shared_ptr<Session>& session);
+        void UnregisterSession(const Session* session);
+        void HandleSessionMessage(const std::shared_ptr<Session>& session, bool isBinary, std::string payload);
+        void HandleProtoCommand(const std::shared_ptr<Session>& session, const std::string& rawBytes);
 
         static nlohmann::json ProcessQuery(const std::string& id, const nlohmann::json& fields);
         static nlohmann::json ProcessCommand(const std::string& action, const nlohmann::json& payload);
 
-        std::unique_ptr<ix::WebSocketServer> _server;
+        std::unique_ptr<Impl> _impl;
         std::atomic<bool> _running{false};
         uint16_t _port{47778};
         std::string _host{"0.0.0.0"};
-        std::atomic<int> _clientCount{ 0 };
-
-        void HandleProtoCommand(ix::WebSocket& webSocket, const std::string& rawBytes);
+        std::atomic<int> _clientCount{0};
     };
 
 }
