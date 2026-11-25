@@ -809,14 +809,7 @@ namespace SkyPotion::Game {
                 );
             } else {
                 SKSE::log::info("MenuOpenCloseEvent: LoadingMenu closed. Scheduling session snapshot.");
-                auto taskInterface = SKSE::GetTaskInterface();
-                if (taskInterface) {
-                    taskInterface->AddTask([]() {
-                        if (Util::IsGameSessionReady()) {
-                            Server::WebSocketServer::GetSingleton().BroadcastProtoSnapshot();
-                        }
-                    });
-                }
+                Server::WebSocketServer::GetSingleton().ScheduleSessionSnapshot();
             }
             return RE::BSEventNotifyControl::kContinue;
         }

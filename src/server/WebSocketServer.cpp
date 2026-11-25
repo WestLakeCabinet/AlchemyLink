@@ -100,8 +100,8 @@ namespace SkyPotion::Server {
                 connectionState ? connectionState->getId() : "unknown",
                 msg->openInfo.uri);
 
-            // 안드로이드 앱(/skypotion/sync) 접속 시 Protobuf 스냅샷 즉시 전송
-            BroadcastProtoSnapshot();
+            // 안드로이드 앱 접속 시 세션 스냅샷 스케줄링 (준비 대기 및 재시도 포함)
+            ScheduleSessionSnapshot();
             return;
         }
 
@@ -771,17 +771,30 @@ void WebSocketServer::BroadcastProtoSnapshot() {
         try {
             if (!_running.load() || !_server || !HasConnectedClients()) return;
             if (!Util::IsGameSessionReady()) {
-                SKSE::log::info("BroadcastProtoSnapshot: Game session not ready, deferring");
+                SKSE::log::info("BroadcastProtoSnapshot: Game session not ready");
                 return;
             }
 
-            // 1) 마스터 카탈로그 + 초기 스탯 + 초기 재고 + 발견 마스크 일괄 전송
+            // 1) 마스터 카탈로그 (CatalogSnapshot: 캐릭터명, 재료 마스터, MGEF 마스터, 초기 스탯 등)
             std::string catalogBin = Sync::ProtoPacketBuilder::BuildCatalogSnapshot();
             if (!catalogBin.empty()) {
                 BroadcastBinary(catalogBin);
             }
 
-            // 2) 현재 연금술대 열림 상태 및 선택 재료 전송
+            // 2) 실시간 플레이어 스탯 & 퍽 (PlayerCraftingStats, Tag 12)
+            // 안드로이드 앱의 스킬/스탯 관찰 리스너(Flow)가 즉시 갱신되도록 명시적 전송
+            std::string statsBin = Sync::ProtoPacketBuilder::BuildPlayerAlchemyStats();
+            if (!statsBin.empty()) {
+                BroadcastBinary(statsBin);
+            }
+
+            // 3) 실시간 인벤토리 재료 수량 (InventoryUpdate, Tag 11)
+            std::string invBin = Sync::ProtoPacketBuilder::BuildInventoryFullSnapshot();
+            if (!invBin.empty()) {
+                BroadcastBinary(invBin);
+            }
+
+            // 4) 현재 연금술대 열림 상태 및 선택 재료 전송 (BenchState, Tag 15)
             bool isOpen = Game::AlchemyController::IsAlchemyItemListReady();
             std::vector<RE::FormID> selected = isOpen
                 ? Game::AlchemyController::GetSelectedIngredientFormIDs()
@@ -792,11 +805,38 @@ void WebSocketServer::BroadcastProtoSnapshot() {
             }
 
             BroadcastBinary(Sync::ProtoPacketBuilder::BuildAlchemyBenchState(isOpen, selected));
-            SKSE::log::info("BroadcastProtoSnapshot: sent CatalogSnapshot ({} bytes, benchOpen={})",
-                catalogBin.size(), isOpen);
+            SKSE::log::info("BroadcastProtoSnapshot: sent CatalogSnapshot, PlayerStats, InventorySnapshot, BenchState (isOpen={})", isOpen);
         } catch (const std::exception& e) {
             SKSE::log::error("Error in BroadcastProtoSnapshot: {}", e.what());
         }
+    });
+}
+
+void WebSocketServer::ScheduleSessionSnapshot(int attempt) {
+    if (!HasConnectedClients()) return;
+
+    auto* taskInterface = SKSE::GetTaskInterface();
+    if (!taskInterface) return;
+
+    taskInterface->AddTask([this, attempt]() {
+        if (!_running.load() || !_server || !HasConnectedClients()) return;
+
+        if (!Util::IsGameSessionReady()) {
+            if (attempt < 20) {
+                // 게임 세션 준비(LoadingMenu 닫힘, 3D 로드 등) 대기 후 재시도 (100ms 간격, 최대 2초)
+                std::thread([this, attempt]() {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                    ScheduleSessionSnapshot(attempt + 1);
+                }).detach();
+            } else {
+                SKSE::log::warn("ScheduleSessionSnapshot: Timed out waiting for game session (attempt={})", attempt);
+            }
+            return;
+        }
+
+        SKSE::log::info("ScheduleSessionSnapshot: Game session ready (attempt={}), broadcasting snapshots...", attempt);
+        BroadcastProtoSnapshot();
+        BroadcastGameSessionLoaded(); // JSON 클라이언트 동시 지원
     });
 }
 

@@ -25,6 +25,7 @@ namespace SkyPotion::Server {
 
         void BroadcastBinary(const std::string& binaryPayload);
         void BroadcastProtoSnapshot(); // 초기 접속 / 세이브 로드 시 CatalogSnapshot + BenchState 전송
+        void ScheduleSessionSnapshot(int attempt = 0); // 세이브 로드 / 접속 시 준비 대기 및 자동 재시도 스냅샷
 
     private:
         WebSocketServer();

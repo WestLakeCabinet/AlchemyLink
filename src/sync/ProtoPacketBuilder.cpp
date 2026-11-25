@@ -44,42 +44,38 @@ std::string ProtoPacketBuilder::ResolveGameLanguage() {
     return "ENGLISH";
 }
 
-/*
 double ProtoPacketBuilder::GetTotalFortifyAlchemy(RE::PlayerCharacter* player) {
     if (!player || !Util::IsGameSessionReady()) return 0.0;
 
     double totalBonus = 0.0;
-    auto* magicTarget = player->AsMagicTarget();
-    if (!magicTarget) return 0.0;
+    if (auto* magicTarget = player->AsMagicTarget()) {
+        if (auto* activeEffects = magicTarget->GetActiveEffectList()) {
+            for (auto* ae : *activeEffects) {
+                if (!ae || ae->flags.any(RE::ActiveEffect::Flag::kInactive) || !ae->effect) {
+                    continue;
+                }
+                auto* mgef = ae->GetBaseObject();
+                if (!mgef) continue;
 
-    auto* activeEffects = magicTarget->GetActiveEffectList();
-    if (!activeEffects) return 0.0;
-
-    for (auto* ae : *activeEffects) {
-        if (!ae || ae->flags.any(RE::ActiveEffect::Flag::kInactive) || !ae->effect) {
-            continue;
-        }
-        auto* mgef = ae->GetBaseObject();
-        if (!mgef) continue;
-
-        const auto arch = mgef->GetArchetype();
-        if ((arch == RE::EffectSetting::Archetype::kPeakValueModifier ||
-             arch == RE::EffectSetting::Archetype::kValueModifier) &&
-            mgef->GetMagickSkill() == RE::ActorValue::kAlchemy) {
-            totalBonus += ae->magnitude;
+                const auto arch = mgef->GetArchetype();
+                if ((arch == RE::EffectSetting::Archetype::kPeakValueModifier ||
+                     arch == RE::EffectSetting::Archetype::kValueModifier) &&
+                    mgef->GetMagickSkill() == RE::ActorValue::kAlchemy) {
+                    totalBonus += ae->magnitude;
+                }
+            }
         }
     }
-    return totalBonus;
-}
-*/
 
-double ProtoPacketBuilder::GetTotalFortifyAlchemy(RE::PlayerCharacter* player) {
-    if (!player || !Util::IsGameSessionReady()) return 0.0;
-    auto* avOwner = player->AsActorValueOwner();
-    if (!avOwner) return 0.0;
-                     //env.alchemyModifierPct = avo->GetActorValue(RE::ActorValue::kAlchemyModifier);
-                     //env.alchemyPowerModifierPct = avo->GetActorValue(RE::ActorValue::kAlchemyPowerModifier);
-    return static_cast<double>(avOwner->GetActorValue(RE::ActorValue::kAlchemyModifier));
+    if (totalBonus <= 0.0) {
+        if (auto* avOwner = player->AsActorValueOwner()) {
+            float mod = avOwner->GetActorValue(RE::ActorValue::kAlchemyModifier);
+            float pwr = avOwner->GetActorValue(RE::ActorValue::kAlchemyPowerModifier);
+            totalBonus = std::max(mod, pwr);
+        }
+    }
+
+    return totalBonus;
 }
 
 void ProtoPacketBuilder::FillPlayerAlchemyStats(pb::PlayerCraftingStats* out) {
@@ -91,8 +87,11 @@ void ProtoPacketBuilder::FillPlayerAlchemyStats(pb::PlayerCraftingStats* out) {
     out->set_character_name(ResolvePlayerName(player));
 
     if (auto* avOwner = player->AsActorValueOwner()) {
-        out->set_skill_level(static_cast<int32_t>(std::round(avOwner->GetActorValue(RE::ActorValue::kAlchemy))));
-        out->set_fortify_alchemy_total(static_cast<int32_t>(std::round(avOwner->GetActorValue(RE::ActorValue::kAlchemyModifier))));
+        float currentSkill = avOwner->GetActorValue(RE::ActorValue::kAlchemy);
+        float baseSkill = avOwner->GetBaseActorValue(RE::ActorValue::kAlchemy);
+        float effectiveSkill = (currentSkill > 0.0f) ? currentSkill : baseSkill;
+        out->set_skill_level(static_cast<int32_t>(std::round(effectiveSkill)));
+        out->set_fortify_alchemy_total(static_cast<int32_t>(std::round(GetTotalFortifyAlchemy(player))));
     }
 
     auto hasPerk = [player](RE::FormID id) -> bool {
