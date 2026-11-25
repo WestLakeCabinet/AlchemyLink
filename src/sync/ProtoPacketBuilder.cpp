@@ -35,6 +35,19 @@ std::string ProtoPacketBuilder::ResolvePlayerName(RE::PlayerCharacter* player) {
     return "Player";
 }
 
+std::string ProtoPacketBuilder::ResolvePlayerRace(RE::PlayerCharacter* player) {
+    if (!player) return "Unknown";
+    if (auto* race = player->GetRace()) {
+        if (const char* name = race->GetName(); name && name[0] != '\0') {
+            return name;
+        }
+        if (const char* edid = race->GetFormEditorID(); edid && edid[0] != '\0') {
+            return edid;
+        }
+    }
+    return "Unknown";
+}
+
 std::string ProtoPacketBuilder::ResolveGameLanguage() {
     auto* ini = RE::INISettingCollection::GetSingleton();
     auto* setting = ini ? ini->GetSetting("sLanguage:General") : nullptr;
@@ -85,6 +98,9 @@ void ProtoPacketBuilder::FillPlayerAlchemyStats(pb::PlayerCraftingStats* out) {
     if (!player) return;
 
     out->set_character_name(ResolvePlayerName(player));
+    out->set_character_level(static_cast<int32_t>(player->GetLevel()));
+    out->set_character_race(ResolvePlayerRace(player));
+    out->set_gold(static_cast<int32_t>(player->GetGoldAmount()));
 
     if (auto* avOwner = player->AsActorValueOwner()) {
         float currentSkill = avOwner->GetActorValue(RE::ActorValue::kAlchemy);
@@ -127,6 +143,9 @@ std::string ProtoPacketBuilder::BuildCatalogSnapshot() {
     auto* snapshot = packet.mutable_catalog_snapshot();
     snapshot->set_character_name(ResolvePlayerName(player));
     snapshot->set_game_language(ResolveGameLanguage());
+    snapshot->set_character_level(static_cast<int32_t>(player->GetLevel()));
+    snapshot->set_character_race(ResolvePlayerRace(player));
+    snapshot->set_gold(static_cast<int32_t>(player->GetGoldAmount()));
     snapshot->set_potion_prefix(ResolveGameSettingString("sCreatedPotionNamePrefix", "Potion of "));
     snapshot->set_poison_prefix(ResolveGameSettingString("sCreatedPoisonNamePrefix", "Poison of "));
     FillPlayerAlchemyStats(snapshot->mutable_initial_stats());

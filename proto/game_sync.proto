@@ -51,6 +51,9 @@ message CatalogSnapshot {
   string session_id = 1;                // 세이브/세션 식별자
   string character_name = 2;            // 현재 캐릭터 이름
   string game_language = 3;             // 게임 언어 (예: "ENGLISH", "KOREAN")
+  int32 character_level = 9;            // 플레이어 레벨
+  string character_race = 10;           // 플레이어 종족 (예: "Breton", "High Elf")
+  int32 gold = 11;                      // 골드 소지량
 
   // --- [공통 접두사 (GMST)] ---
   string potion_prefix = 7;             // GMST: sCreatedPotionNamePrefix (예: "Potion of ")
@@ -336,6 +339,11 @@ message PlayerCraftingStats {
   int32 fortify_smithing_total = 21;   // 제련 강화 장비+포션 버프 (%)
   bool arcane_blacksmith = 22;         // Arcane Blacksmith (마법 장비 강화 가능)
   uint32 smithing_perks_mask = 23;     // 비트마스크: Steel, Elven, Dwarven, Orcish, Advanced, Glass, Ebony, Daedric, Dragon
+
+  // --- [플레이어 기본 프로필] ---
+  int32 character_level = 24;          // 플레이어 레벨
+  string character_race = 25;          // 플레이어 종족 (예: "Breton", "High Elf")
+  int32 gold = 26;                     // 골드 소지량
 }
 
 // 하위 호환용 alias 메시지 (기존 C++ 빌드 완벽 보장)

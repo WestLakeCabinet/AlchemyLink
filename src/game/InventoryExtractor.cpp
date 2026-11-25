@@ -84,6 +84,12 @@ RE::BSEventNotifyControl InventoryEventHandler::ProcessEvent(
         return RE::BSEventNotifyControl::kContinue;
     }
 
+    constexpr RE::FormID GOLD_FORM_ID = 0x0000000F;
+    if (a_event->baseObj == GOLD_FORM_ID) {
+        RequestAlchemyStatsSync();
+        return RE::BSEventNotifyControl::kContinue;
+    }
+
     auto* form = RE::TESForm::LookupByID(a_event->baseObj);
     if (form && form->Is(RE::FormType::Ingredient)) {
         RequestInventorySync();

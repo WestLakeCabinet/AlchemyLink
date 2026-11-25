@@ -66,12 +66,21 @@ nlohmann::json StatExtractor::GetPlayerStatsJson() {
     auto avOwner = player->AsActorValueOwner();
     if (!avOwner) return nlohmann::json::object();
 
-    // 1. Resolve player name
+    // 1. Resolve player name & race
     std::string playerName = "Player";
     if (player->GetActorBase() && player->GetActorBase()->GetName() && player->GetActorBase()->GetName()[0] != '\0') {
         playerName = player->GetActorBase()->GetName();
     } else if (player->GetName() && player->GetName()[0] != '\0') {
         playerName = player->GetName();
+    }
+
+    std::string playerRace = "Unknown";
+    if (auto* race = player->GetRace()) {
+        if (const char* raceName = race->GetName(); raceName && raceName[0] != '\0') {
+            playerRace = raceName;
+        } else if (const char* raceEdid = race->GetFormEditorID(); raceEdid && raceEdid[0] != '\0') {
+            playerRace = raceEdid;
+        }
     }
 
     // 2. Resolve configured game language from Skyrim INI
@@ -87,6 +96,8 @@ nlohmann::json StatExtractor::GetPlayerStatsJson() {
         { "playerName", playerName },
         { "language", language },
         { "level", player->GetLevel() },
+        { "race", playerRace },
+        { "gold", player->GetGoldAmount() },
         { "health", Util::Round3(avOwner->GetActorValue(RE::ActorValue::kHealth)) },
         { "healthBase", Util::Round3(avOwner->GetBaseActorValue(RE::ActorValue::kHealth)) },
         { "magicka", Util::Round3(avOwner->GetActorValue(RE::ActorValue::kMagicka)) },

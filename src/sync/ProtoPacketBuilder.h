@@ -39,6 +39,7 @@ private:
     static void FillPlayerAlchemyStats(pb::PlayerCraftingStats* out);
     static double GetTotalFortifyAlchemy(RE::PlayerCharacter* player);
     static std::string ResolvePlayerName(RE::PlayerCharacter* player);
+    static std::string ResolvePlayerRace(RE::PlayerCharacter* player);
     static std::string ResolveGameLanguage();
 };
 
