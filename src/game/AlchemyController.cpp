@@ -104,11 +104,41 @@ namespace SkyPotion::Game {
         auto* movie = craftingMenu ? craftingMenu->uiMovie.get() : (alchemyMenu ? alchemyMenu->view.get() : nullptr);
         if (movie) {
             if (movie->GetVariable(&list, "_root.Menu.InventoryLists.ItemList") && list.IsObject()) return list;
+            if (movie->GetVariable(&list, "_root.Menu.InventoryLists.itemList") && list.IsObject()) return list;
+            if (movie->GetVariable(&list, "_root.Menu.inventoryLists.itemList") && list.IsObject()) return list;
             if (movie->GetVariable(&list, "_root.CraftingMenu.InventoryLists.itemList") && list.IsObject()) return list;
             if (movie->GetVariable(&list, "_root.Menu_mc.inventoryLists.itemList") && list.IsObject()) return list;
             if (movie->GetVariable(&list, "_root.CraftingMenu.inventoryLists.itemList") && list.IsObject()) return list;
         }
         return list;
+    }
+
+    static bool IsSkyUICraftingMenu(RE::GFxMovieView* movie, const RE::GFxValue& targetList) {
+        RE::GFxValue v;
+        if (movie) {
+            if ((movie->GetVariable(&v, "_global.skyui") && v.IsObject()) ||
+                (movie->GetVariable(&v, "_root.Menu.InventoryLists.categoryList") && v.IsObject()) ||
+                (movie->GetVariable(&v, "_root.Menu.InventoryLists.searchWidget") && v.IsObject())) {
+                return true;
+            }
+        }
+        if (targetList.IsObject()) {
+            RE::GFxValue listRef = targetList;
+            if ((listRef.GetMember("listState", &v) && v.IsObject()) ||
+                (listRef.GetMember("_entryList", &v) && v.IsArray())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static bool GetListEntryArray(RE::GFxValue& targetList, RE::GFxValue& outArray) {
+        if (!targetList.IsObject()) return false;
+        if (targetList.GetMember("entryList", &outArray) && outArray.IsArray()) return true;
+        if (targetList.GetMember("_entryList", &outArray) && outArray.IsArray()) return true;
+        if (targetList.GetMember("_dataProvider", &outArray) && outArray.IsArray()) return true;
+        if (targetList.GetMember("dataProvider", &outArray) && outArray.IsArray()) return true;
+        return false;
     }
 
     bool AlchemyController::IsAlchemyItemListReady() {
@@ -130,7 +160,31 @@ namespace SkyPotion::Game {
 
         auto* movie = craftingMenu ? craftingMenu->uiMovie.get() : (alchemyMenu->view ? alchemyMenu->view.get() : nullptr);
 
-        // 2. Scaleform craftingMenu / inventoryLists의 bInCategories 확인 (바닐라 및 SkyUI 공통 플래그)
+        // 2. itemList 객체 확인
+        RE::GFxValue targetList = GetTargetItemList(alchemyMenu, craftingMenu.get());
+        if (!targetList.IsObject()) {
+            return false;
+        }
+
+        // itemList가 숨겨져 있는지(_visible == false)
+        RE::GFxValue visibleVal;
+        if (targetList.GetMember("_visible", &visibleVal) && visibleVal.IsBool() && !visibleVal.GetBool()) {
+            return false;
+        }
+
+        // itemList 알파값이 0인지
+        RE::GFxValue alphaVal;
+        if (targetList.GetMember("_alpha", &alphaVal) && alphaVal.IsNumber() && alphaVal.GetNumber() <= 0.0) {
+            return false;
+        }
+
+        // SkyUI에서는 카테고리 목록과 재료 목록이 동시에 표시되므로,
+        // categoryList에 포커스가 있거나 검색 필터로 entryList가 비어 있어도 재료 선택/제조가 가능함.
+        if (IsSkyUICraftingMenu(movie, targetList)) {
+            return true;
+        }
+
+        // 3. 바닐라 메뉴: Scaleform craftingMenu / inventoryLists의 bInCategories 확인
         RE::GFxValue inCategoriesVal;
         if (alchemyMenu->craftingMenu.IsObject()) {
             if (alchemyMenu->craftingMenu.GetMember("bInCategories", &inCategoriesVal) && inCategoriesVal.IsBool()) {
@@ -150,28 +204,9 @@ namespace SkyPotion::Game {
                 inCategoriesVal.IsBool() && inCategoriesVal.GetBool()) {
                 return false;
             }
-
-            // SkyUI inventoryLists._currentState 확인 (1 = SHOW_CATEGORIES, 2 = SHOW_PANEL)
-            RE::GFxValue panelState;
-            if (movie->GetVariable(&panelState, "_root.Menu_mc.inventoryLists._currentState") ||
-                movie->GetVariable(&panelState, "_root.Menu.InventoryLists._currentState") ||
-                movie->GetVariable(&panelState, "_root.CraftingMenu.InventoryLists._currentState")) {
-                if (panelState.IsNumber() && static_cast<int>(panelState.GetNumber()) < 2) {
-                    return false;
-                }
-            }
-
-            // SkyUI categoryList 포커스 여부
-            RE::GFxValue catFocus;
-            if ((movie->GetVariable(&catFocus, "_root.Menu_mc.inventoryLists.categoryList.bHasFocus") ||
-                 movie->GetVariable(&catFocus, "_root.Menu.InventoryLists.categoryList.bHasFocus") ||
-                 movie->GetVariable(&catFocus, "_root.CraftingMenu.InventoryLists.categoryList.bHasFocus")) &&
-                catFocus.IsBool() && catFocus.GetBool()) {
-                return false;
-            }
         }
 
-        // 3. categories 리스트가 포커스를 가지고 있는지 확인
+        // categories 리스트가 포커스를 가지고 있는지 확인
         if (alchemyMenu->categories.IsObject()) {
             RE::GFxValue catFocus;
             if (alchemyMenu->categories.GetMember("bHasFocus", &catFocus) && catFocus.IsBool() && catFocus.GetBool()) {
@@ -179,13 +214,7 @@ namespace SkyPotion::Game {
             }
         }
 
-        // 4. itemList 객체 상태 및 포커스 검사
-        RE::GFxValue targetList = GetTargetItemList(alchemyMenu, craftingMenu.get());
-        if (!targetList.IsObject()) {
-            return false;
-        }
-
-        // SkyUI에서는 카테고리 단계일 때 itemList의 disableInput 또는 disableSelection이 true로 설정됨
+        // itemList의 disableInput / disableSelection 확인
         RE::GFxValue disableVal;
         if (targetList.GetMember("disableInput", &disableVal) && disableVal.IsBool() && disableVal.GetBool()) {
             return false;
@@ -200,47 +229,132 @@ namespace SkyPotion::Game {
             return false;
         }
 
-        // itemList가 숨겨져 있는지(_visible == false)
-        RE::GFxValue visibleVal;
-        if (targetList.GetMember("_visible", &visibleVal) && visibleVal.IsBool() && !visibleVal.GetBool()) {
-            return false;
-        }
-
-        // itemList 알파값이 0인지
-        RE::GFxValue alphaVal;
-        if (targetList.GetMember("_alpha", &alphaVal) && alphaVal.IsNumber() && alphaVal.GetNumber() <= 0.0) {
-            return false;
-        }
-
         // entryList 또는 _dataProvider 배열 확인
-        uint32_t flashCount = 0;
         RE::GFxValue listArray;
-        if (targetList.GetMember("entryList", &listArray) && listArray.IsArray()) {
-            flashCount = listArray.GetArraySize();
-        } else if (targetList.GetMember("_dataProvider", &listArray) && listArray.IsArray()) {
-            flashCount = listArray.GetArraySize();
-        } else if (targetList.GetMember("dataProvider", &listArray) && listArray.IsArray()) {
-            flashCount = listArray.GetArraySize();
-        } else {
-            return false;
-        }
-
-        if (flashCount == 0) {
+        if (!GetListEntryArray(targetList, listArray) || listArray.GetArraySize() == 0) {
             return false;
         }
 
         return true;
     }
 
-    void RefreshAlchemyUI(RE::CraftingSubMenus::AlchemyMenu* alchemyMenu) {
+    void RefreshAlchemyUI(RE::CraftingSubMenus::AlchemyMenu* alchemyMenu, RE::GFxValue* targetList = nullptr) {
         if (!alchemyMenu) return;
+
+        if (targetList && targetList->IsObject()) {
+            targetList->Invoke("UpdateList");
+            targetList->Invoke("InvalidateData");
+        }
 
         if (alchemyMenu->itemList.IsObject()) {
             alchemyMenu->itemList.Invoke("UpdateList");
+            alchemyMenu->itemList.Invoke("InvalidateData");
         } else if (alchemyMenu->view) {
+            alchemyMenu->view->Invoke("_root.Menu.InventoryLists.itemList.InvalidateData", nullptr, nullptr, 0);
+            alchemyMenu->view->Invoke("_root.Menu.InventoryLists.itemList.UpdateList", nullptr, nullptr, 0);
             alchemyMenu->view->Invoke("_root.CraftingMenu.InventoryLists.itemList.UpdateList", nullptr, nullptr, 0);
             alchemyMenu->view->Invoke("_root.Menu_mc.inventoryLists.itemList.UpdateList", nullptr, nullptr, 0);
         }
+    }
+
+    static std::int32_t FindDisplayIndexForCppIndex(
+        RE::GFxValue& targetList,
+        std::uint32_t cppIdx,
+        RE::FormID formId
+    ) {
+        RE::GFxValue listArray;
+        if (!GetListEntryArray(targetList, listArray)) {
+            return -1;
+        }
+
+        const std::uint32_t size = listArray.GetArraySize();
+        for (std::uint32_t k = 0; k < size; ++k) {
+            RE::GFxValue elem;
+            if (!listArray.GetElement(k, &elem) || !elem.IsObject()) {
+                continue;
+            }
+
+            RE::GFxValue itemIdxVal;
+            if (elem.GetMember("itemIndex", &itemIdxVal) && itemIdxVal.IsNumber()) {
+                if (static_cast<std::uint32_t>(itemIdxVal.GetNumber()) == cppIdx) {
+                    return static_cast<std::int32_t>(k);
+                }
+                continue;
+            }
+
+            if (formId != 0) {
+                RE::GFxValue formIdVal;
+                if (elem.GetMember("formId", &formIdVal) && formIdVal.IsNumber()) {
+                    if (static_cast<RE::FormID>(formIdVal.GetNumber()) == formId) {
+                        return static_cast<std::int32_t>(k);
+                    }
+                }
+            }
+        }
+
+        return -1;
+    }
+
+    static bool ToggleIngredientEntry(
+        RE::CraftingSubMenus::AlchemyMenu* alchemyMenu,
+        RE::CraftingMenu* craftingMenu,
+        RE::GFxValue& targetList,
+        std::uint32_t cppIdx,
+        RE::FormID formId
+    ) {
+        if (!alchemyMenu || cppIdx >= alchemyMenu->ingredientEntries.size()) {
+            return false;
+        }
+
+        const bool wasSelected = (alchemyMenu->ingredientEntries[cppIdx].isSelected != 0);
+
+        // 1. Scaleform 리스트에서 해당 C++ 인덱스에 대응하는 화면 표시 인덱스(displayIdx) 탐색
+        std::int32_t displayIdx = FindDisplayIndexForCppIndex(targetList, cppIdx, formId);
+        if (displayIdx >= 0) {
+            RE::GFxValue prevDisableInput;
+            RE::GFxValue prevDisableSelection;
+            bool hadDisableInput = targetList.GetMember("disableInput", &prevDisableInput) && prevDisableInput.IsBool() && prevDisableInput.GetBool();
+            bool hadDisableSelection = targetList.GetMember("disableSelection", &prevDisableSelection) && prevDisableSelection.IsBool() && prevDisableSelection.GetBool();
+
+            if (hadDisableInput) {
+                targetList.SetMember("disableInput", RE::GFxValue(false));
+            }
+            if (hadDisableSelection) {
+                targetList.SetMember("disableSelection", RE::GFxValue(false));
+            }
+
+            RE::GFxValue indexVal(static_cast<double>(displayIdx));
+            targetList.SetMember("selectedIndex", indexVal);
+
+            RE::GFxValue args[2];
+            args[0] = static_cast<double>(displayIdx);
+            args[1] = 0.0;
+            targetList.Invoke("onItemSelect", nullptr, args, 1);
+            targetList.Invoke("onItemPress", nullptr, args, 2);
+
+            if (hadDisableInput) {
+                targetList.SetMember("disableInput", RE::GFxValue(true));
+            }
+            if (hadDisableSelection) {
+                targetList.SetMember("disableSelection", RE::GFxValue(true));
+            }
+        }
+
+        // 2. SkyUI 카테고리/검색 필터로 화면에 없거나 onItemPress가 동작하지 않은 경우 FxDelegate 직접 호출
+        bool nowSelected = (alchemyMenu->ingredientEntries[cppIdx].isSelected != 0);
+        if (nowSelected == wasSelected && craftingMenu && craftingMenu->fxDelegate) {
+            if (auto* defn = craftingMenu->fxDelegate->callbacks.Get("ChooseIngredient")) {
+                if (defn->callback && defn->handler) {
+                    auto* movie = craftingMenu->uiMovie.get();
+                    RE::GFxValue arg(static_cast<double>(cppIdx));
+                    RE::FxDelegateArgs cbArgs(RE::GFxValue(), defn->handler.get(), movie, &arg, 1);
+                    defn->callback(cbArgs);
+                    nowSelected = (alchemyMenu->ingredientEntries[cppIdx].isSelected != 0);
+                }
+            }
+        }
+
+        return nowSelected != wasSelected;
     }
 
     bool AlchemyController::ClearSelectedIngredients() {
@@ -534,20 +648,15 @@ namespace SkyPotion::Game {
             return result;
         }
 
-        // 4. Untoggle items via Scaleform onItemPress (natural engine untoggle)
+        // 4. Untoggle items via Scaleform (display index) with FxDelegate fallback
         for (const auto& [remId, remIdx] : toRemove) {
-            SKSE::log::info("SelectIngredients: Untoggling 0x{:08X} at index {}", remId, remIdx);
-            RE::GFxValue indexVal(static_cast<double>(remIdx));
-            targetList.SetMember("selectedIndex", indexVal);
-
-            RE::GFxValue args[2];
-            args[0] = static_cast<double>(remIdx);
-            args[1] = 0.0;
-            targetList.Invoke("onItemSelect", nullptr, args, 1);
-            targetList.Invoke("onItemPress", nullptr, args, 2);
+            SKSE::log::info("SelectIngredients: Untoggling 0x{:08X} at cppIndex {}", remId, remIdx);
+            if (!ToggleIngredientEntry(alchemyMenu, craftingMenu.get(), targetList, remIdx, remId)) {
+                SKSE::log::warn("SelectIngredients: Failed to untoggle 0x{:08X} at cppIndex {}", remId, remIdx);
+            }
         }
 
-        // 5. Toggle ON items to add via Scaleform onItemPress
+        // 5. Toggle ON items to add via Scaleform (display index) with FxDelegate fallback
         for (auto addId : toAdd) {
             bool found = false;
             for (std::uint32_t i = 0; i < alchemyMenu->ingredientEntries.size(); ++i) {
@@ -556,15 +665,10 @@ namespace SkyPotion::Game {
 
                 if (entry.ingredient->object->GetFormID() == addId) {
                     found = true;
-                    SKSE::log::info("SelectIngredients: Toggling ON 0x{:08X} at index {}", addId, i);
-                    RE::GFxValue indexVal(static_cast<double>(i));
-                    targetList.SetMember("selectedIndex", indexVal);
-
-                    RE::GFxValue args[2];
-                    args[0] = static_cast<double>(i);
-                    args[1] = 0.0;
-                    targetList.Invoke("onItemSelect", nullptr, args, 1);
-                    targetList.Invoke("onItemPress", nullptr, args, 2);
+                    SKSE::log::info("SelectIngredients: Toggling ON 0x{:08X} at cppIndex {}", addId, i);
+                    if (!ToggleIngredientEntry(alchemyMenu, craftingMenu.get(), targetList, i, addId)) {
+                        SKSE::log::warn("SelectIngredients: Failed to toggle ON 0x{:08X} at cppIndex {}", addId, i);
+                    }
 
                     const char* name = entry.ingredient->object->GetName();
                     result.selectedIngredients.push_back((name && name[0] != '\0') ? name : std::format("0x{:08X}", addId));
@@ -577,8 +681,7 @@ namespace SkyPotion::Game {
         }
 
         // 6. Refresh UI once at the end
-        targetList.Invoke("UpdateList");
-        RefreshAlchemyUI(alchemyMenu);
+        RefreshAlchemyUI(alchemyMenu, &targetList);
 
         // Include retained items in the result
         for (auto targetId : targetFormIds) {
