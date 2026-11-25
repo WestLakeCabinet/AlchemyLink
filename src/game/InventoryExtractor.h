@@ -6,8 +6,6 @@ namespace SkyPotion::Game {
 
 class InventoryExtractor {
 public:
-    // Returns list of ingredients with count and known effects
-    static nlohmann::json GetIngredientsJson();
 };
 
 class InventoryEventHandler :

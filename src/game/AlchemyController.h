@@ -11,17 +11,6 @@ namespace SkyPotion::Game {
         std::vector<std::string> missingIngredients;
         bool crafted{ false };
         int craftedCount{ 0 };
-
-        nlohmann::json ToJson() const {
-            return {
-                { "success", success },
-                { "message", message },
-                { "selectedIngredients", selectedIngredients },
-                { "missingIngredients", missingIngredients },
-                { "crafted", crafted },
-                { "craftedCount", craftedCount }
-            };
-        }
     };
 
     class AlchemyController {

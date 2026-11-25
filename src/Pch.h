@@ -39,8 +39,6 @@ namespace RE::CraftingSubMenus {
 #include <winsock2.h>
 #include <ws2tcpip.h>
 
-#include <nlohmann/json.hpp>
-
 namespace SkyPotion {
     inline std::atomic<bool> g_isShuttingDown{ false };
 }

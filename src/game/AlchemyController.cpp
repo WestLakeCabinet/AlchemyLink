@@ -75,18 +75,6 @@ namespace SkyPotion::Game {
 
             SKSE::log::info("DismissOpenMessageBoxes: Auto-dismissing MessageBoxMenu ({}): '{}'", dismissed + 1, text);
 
-            if (!text.empty()) {
-                int64_t nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-                    std::chrono::system_clock::now().time_since_epoch()).count();
-                nlohmann::json evt = {
-                    { "type", "event" },
-                    { "event", "alchemy.effect_discovered" },
-                    { "message", text },
-                    { "ts", nowMs }
-                };
-                Server::WebSocketServer::GetSingleton().Broadcast(evt);
-            }
-
             RE::MessageBoxMenu::SelectOption(0);
             dismissed++;
         }
@@ -497,16 +485,6 @@ namespace SkyPotion::Game {
                 result.craftedCount = 1;
                 result.success = true;
                 result.message = "Crafted 1 potion";
-
-                int64_t nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-                    std::chrono::system_clock::now().time_since_epoch()).count();
-                nlohmann::json evt = {
-                    { "type", "event" },
-                    { "event", "alchemy.craft_complete" },
-                    { "craftedCount", 1 },
-                    { "ts", nowMs }
-                };
-                Server::WebSocketServer::GetSingleton().Broadcast(evt);
                 return result;
             }
             result.success = false;
@@ -593,16 +571,6 @@ namespace SkyPotion::Game {
                         }
                     });
                 }
-
-                int64_t nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-                    std::chrono::system_clock::now().time_since_epoch()).count();
-                nlohmann::json evt = {
-                    { "type", "event" },
-                    { "event", "alchemy.craft_complete" },
-                    { "craftedCount", crafted },
-                    { "ts", nowMs }
-                };
-                Server::WebSocketServer::GetSingleton().Broadcast(evt);
             }
         }).detach();
 

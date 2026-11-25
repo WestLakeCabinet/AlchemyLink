@@ -6,52 +6,6 @@
 
 namespace SkyPotion::Game {
 
-nlohmann::json InventoryExtractor::GetIngredientsJson() {
-    nlohmann::json itemsArray = nlohmann::json::array();
-
-    if (!Util::IsGameSessionReady()) {
-        return itemsArray;
-    }
-
-    auto player = RE::PlayerCharacter::GetSingleton();
-    if (!player) return itemsArray;
-
-    const auto inventory = player->GetInventory([](RE::TESBoundObject& a_obj) {
-        return a_obj.Is(RE::FormType::Ingredient);
-    });
-
-    for (const auto& [boundObj, data] : inventory) {
-        const auto count = data.first;
-        if (count <= 0 || !boundObj) continue;
-
-        auto* ingredient = boundObj->As<RE::IngredientItem>();
-        if (!ingredient) continue;
-
-        nlohmann::json effectsJson = nlohmann::json::array();
-        const auto& effects = ingredient->effects;
-
-        for (uint32_t i = 0; i < effects.size(); ++i) {
-            auto* effectItem = effects[i];
-            if (!effectItem || !effectItem->baseEffect) continue;
-
-            bool isKnown = (ingredient->gamedata.knownEffectFlags & (1 << i)) != 0;
-
-            effectsJson.push_back({
-                { "formId", std::format("0x{:08X}", effectItem->baseEffect->GetFormID()) },
-                { "known", isKnown }
-            });
-        }
-
-        itemsArray.push_back({
-            { "formId", std::format("0x{:08X}", ingredient->GetFormID()) },
-            { "count", count },
-            { "effects", std::move(effectsJson) }
-        });
-    }
-
-    return itemsArray;
-}
-
 InventoryEventHandler* InventoryEventHandler::GetSingleton() {
     static InventoryEventHandler instance;
     return &instance;

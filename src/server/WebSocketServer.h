@@ -18,11 +18,6 @@ namespace SkyPotion::Server {
         bool IsRunning() const;
         bool HasConnectedClients() const;
 
-        void Broadcast(const nlohmann::json& message);
-        void BroadcastFullSnapshot();
-        void BroadcastGameData();
-        void BroadcastGameSessionLoaded();
-
         void BroadcastBinary(const std::string& binaryPayload);
         void BroadcastProtoSnapshot(); // 초기 접속 / 세이브 로드 시 CatalogSnapshot + BenchState 전송
         void ScheduleSessionSnapshot(int attempt = 0); // 세이브 로드 / 접속 시 준비 대기 및 자동 재시도 스냅샷
@@ -42,9 +37,6 @@ namespace SkyPotion::Server {
         void UnregisterSession(const Session* session);
         void HandleSessionMessage(const std::shared_ptr<Session>& session, bool isBinary, std::string payload);
         void HandleProtoCommand(const std::shared_ptr<Session>& session, const std::string& rawBytes);
-
-        static nlohmann::json ProcessQuery(const std::string& id, const nlohmann::json& fields);
-        static nlohmann::json ProcessCommand(const std::string& action, const nlohmann::json& payload);
 
         std::unique_ptr<Impl> _impl;
         std::atomic<bool> _running{false};
