@@ -97,11 +97,12 @@ SKSEPluginLoad(const SKSE::LoadInterface* a_skse) {
     return true;
 }
 
-extern "C" [[maybe_unused]] __declspec(dllexport) BOOL WINAPI DllMain(HINSTANCE /*hinstDLL*/, DWORD fdwReason, LPVOID /*lpvReserved*/) {
+extern "C" [[maybe_unused]] __declspec(dllexport) BOOL WINAPI DllMain(HINSTANCE /*hinstDLL*/, DWORD fdwReason, LPVOID lpvReserved) {
     if (fdwReason == DLL_PROCESS_DETACH) {
         SkyPotion::g_isShuttingDown.store(true);
+        const bool canJoin = (lpvReserved == nullptr);
+        SkyPotion::Game::AlchemyController::StopCrafting(canJoin);
         SkyPotion::Server::WebSocketServer::GetSingleton().Stop();
-        SkyPotion::Game::AlchemyController::StopCrafting();
     }
     return TRUE;
 }

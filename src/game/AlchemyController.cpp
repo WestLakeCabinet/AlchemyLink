@@ -5,7 +5,9 @@
 #include "RE/M/MessageBoxMenu.h"
 #include "RE/M/MessageBoxData.h"
 #include <chrono>
+#include <condition_variable>
 #include <future>
+#include <mutex>
 #include <thread>
 #include <atomic>
 
@@ -13,6 +15,9 @@ namespace SkyPotion::Game {
 
     static std::atomic<bool> s_craftCancel{ false };
     static std::atomic<bool> s_isCrafting{ false };
+    static std::mutex s_craftMutex;
+    static std::condition_variable s_craftCv;
+    static std::thread s_craftThread;
 
     RE::CraftingSubMenus::AlchemyMenu* AlchemyController::GetAlchemyMenu() {
         if (!Util::IsGameSessionReady()) {
@@ -45,14 +50,30 @@ namespace SkyPotion::Game {
         return s_isCrafting.load();
     }
 
-    bool AlchemyController::StopCrafting() {
-        SKSE::log::info("AlchemyController StopCrafting");
-        if (s_isCrafting.load()) {
-            s_craftCancel.store(true);
-            SKSE::log::info("AlchemyController: StopCrafting requested");
-            return true;
+    bool AlchemyController::StopCrafting(bool waitForExit) {
+        SKSE::log::info("AlchemyController StopCrafting (waitForExit={})", waitForExit);
+        const bool wasCrafting = s_isCrafting.load();
+        s_craftCancel.store(true);
+        s_craftCv.notify_all();
+
+        if (waitForExit) {
+            std::thread threadToJoin;
+            {
+                std::lock_guard<std::mutex> lock(s_craftMutex);
+                if (s_craftThread.joinable() &&
+                    std::this_thread::get_id() != s_craftThread.get_id()) {
+                    threadToJoin = std::move(s_craftThread);
+                }
+            }
+            if (threadToJoin.joinable()) {
+                threadToJoin.join();
+            }
         }
-        return false;
+
+        if (wasCrafting) {
+            SKSE::log::info("AlchemyController: StopCrafting completed");
+        }
+        return wasCrafting;
     }
 
     void AlchemyController::DismissOpenMessageBoxes() {
@@ -497,6 +518,7 @@ namespace SkyPotion::Game {
         }
 
         // Prevent starting a new bulk craft if one is already in progress (avoids deadlock)
+        std::unique_lock<std::mutex> craftLock(s_craftMutex);
         if (s_isCrafting.load()) {
             SKSE::log::warn("CraftPotions: Bulk crafting is already in progress");
             result.success = false;
@@ -506,10 +528,31 @@ namespace SkyPotion::Game {
             return result;
         }
 
+        if (s_craftThread.joinable()) {
+            std::thread oldThread = std::move(s_craftThread);
+            craftLock.unlock();
+            oldThread.join();
+            craftLock.lock();
+
+            if (s_isCrafting.load()) {
+                SKSE::log::warn("CraftPotions: Bulk crafting is already in progress");
+                result.success = false;
+                result.crafted = false;
+                result.craftedCount = 0;
+                result.message = "Crafting already in progress";
+                return result;
+            }
+        }
+
         s_craftCancel.store(false);
         s_isCrafting.store(true);
 
-        std::thread([count]() {
+        s_craftThread = std::thread([count]() {
+            struct CraftTaskState {
+                std::atomic<bool> completed{ false };
+                std::atomic<bool> succeeded{ false };
+            };
+
             int crafted = 0;
             SKSE::log::info("CraftPotions: Starting bulk craft of up to {} potions", count);
             for (int i = 0; i < count; ++i) {
@@ -518,15 +561,17 @@ namespace SkyPotion::Game {
                     break;
                 }
 
-                auto promise = std::make_shared<std::promise<bool>>();
-                auto future = promise->get_future();
-
                 auto* taskInterface = SKSE::GetTaskInterface();
                 if (!taskInterface) break;
 
-                taskInterface->AddTask([promise]() {
-                    if (SkyPotion::g_isShuttingDown.load() || !Util::IsGameSessionReady()) {
-                        promise->set_value(false);
+                auto taskState = std::make_shared<CraftTaskState>();
+                taskInterface->AddTask([taskState]() {
+                    if (s_craftCancel.load() || SkyPotion::g_isShuttingDown.load() || !Util::IsGameSessionReady()) {
+                        taskState->succeeded.store(false);
+                        taskState->completed.store(true);
+                        if (!SkyPotion::g_isShuttingDown.load()) {
+                            s_craftCv.notify_all();
+                        }
                         return;
                     }
 
@@ -534,22 +579,48 @@ namespace SkyPotion::Game {
 
                     auto* menu = AlchemyController::GetAlchemyMenu();
                     if (!menu || menu->selectedIndexes.size() < 2) {
-                        promise->set_value(false); // Out of ingredients or menu closed
+                        taskState->succeeded.store(false); // Out of ingredients or menu closed
+                        taskState->completed.store(true);
+                        if (!SkyPotion::g_isShuttingDown.load()) {
+                            s_craftCv.notify_all();
+                        }
                         return;
                     }
                     auto* userEvents = RE::UserEvents::GetSingleton();
                     if (!userEvents) {
-                        promise->set_value(false);
+                        taskState->succeeded.store(false);
+                        taskState->completed.store(true);
+                        if (!SkyPotion::g_isShuttingDown.load()) {
+                            s_craftCv.notify_all();
+                        }
                         return;
                     }
 
                     menu->ProcessUserEvent(&userEvents->xButton);
                     AlchemyController::DismissOpenMessageBoxes();
-                    promise->set_value(true);
+                    taskState->succeeded.store(true);
+                    taskState->completed.store(true);
+                    if (!SkyPotion::g_isShuttingDown.load()) {
+                        s_craftCv.notify_all();
+                    }
                 });
 
-                if (future.wait_for(std::chrono::seconds(2)) == std::future_status::ready) {
-                    if (!future.get()) {
+                {
+                    std::unique_lock<std::mutex> waitLock(s_craftMutex);
+                    s_craftCv.wait_for(waitLock, std::chrono::seconds(2), [&taskState]() {
+                        return taskState->completed.load() ||
+                            s_craftCancel.load() ||
+                            SkyPotion::g_isShuttingDown.load();
+                    });
+                }
+
+                if (s_craftCancel.load() || SkyPotion::g_isShuttingDown.load()) {
+                    SKSE::log::info("CraftPotions: Cancelled while waiting for craft task after {} potions", crafted);
+                    break;
+                }
+
+                if (taskState->completed.load()) {
+                    if (!taskState->succeeded.load()) {
                         SKSE::log::info("CraftPotions: Finished at potion {} (ingredients depleted or menu closed)", crafted);
                         break;
                     }
@@ -559,14 +630,22 @@ namespace SkyPotion::Game {
                     break;
                 }
 
-                // 200ms delay between crafts for UI/inventory/sound settling
-                std::this_thread::sleep_for(std::chrono::milliseconds(200));
+                // 200ms delay between crafts for UI/inventory/sound settling (interruptible)
+                {
+                    std::unique_lock<std::mutex> delayLock(s_craftMutex);
+                    if (s_craftCv.wait_for(delayLock, std::chrono::milliseconds(200), []() {
+                        return s_craftCancel.load() || SkyPotion::g_isShuttingDown.load();
+                    })) {
+                        SKSE::log::info("CraftPotions: Cancelled during inter-craft delay after {} potions", crafted);
+                        break;
+                    }
+                }
             }
 
             s_isCrafting.store(false);
             SKSE::log::info("CraftPotions: Bulk craft completed (total crafted: {})", crafted);
 
-            if (!SkyPotion::g_isShuttingDown.load()) {
+            if (!s_craftCancel.load() && !SkyPotion::g_isShuttingDown.load()) {
                 auto* taskInterface = SKSE::GetTaskInterface();
                 if (taskInterface) {
                     taskInterface->AddTask([]() {
@@ -576,7 +655,7 @@ namespace SkyPotion::Game {
                     });
                 }
             }
-        }).detach();
+        });
 
         result.success = true;
         result.crafted = true;

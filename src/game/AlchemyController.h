@@ -35,7 +35,7 @@ namespace SkyPotion::Game {
         static AlchemySelectResult CraftPotions(int count = 1);
 
         // Stops any currently running bulk crafting session
-        static bool StopCrafting();
+        static bool StopCrafting(bool waitForExit = true);
 
         // Checks if bulk crafting is currently running
         static bool IsCrafting();
