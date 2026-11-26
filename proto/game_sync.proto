@@ -315,8 +315,8 @@ message PlayerCraftingStats {
   string character_name = 1;
 
   // --- [연금술 스탯] ---
-  int32 skill_level = 2;               // 연금술 스킬 레벨 (하위 호환 유지)
-  int32 fortify_alchemy_total = 3;     // 연금술 강화 장비/버프 총합 (%)
+  float skill_level = 2;               // 연금술 스킬 레벨 (하위 호환 유지)
+  float fortify_alchemy_total = 3;     // 연금술 강화 장비/버프 총합 (%)
   int32 alchemist_rank = 4;            // Alchemist 퍽 랭크 (0 ~ 5)
   bool benefactor = 5;                 // Benefactor 퍽
   bool physician = 6;                  // Physician 퍽
@@ -349,8 +349,8 @@ message PlayerCraftingStats {
 // 하위 호환용 alias 메시지 (기존 C++ 빌드 완벽 보장)
 message PlayerAlchemyStats {
   string character_name = 1;
-  int32 skill_level = 2;
-  int32 fortify_alchemy_total = 3;
+  float skill_level = 2;
+  float fortify_alchemy_total = 3;
   int32 alchemist_rank = 4;
   bool benefactor = 5;
   bool physician = 6;

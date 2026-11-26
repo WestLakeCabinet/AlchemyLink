@@ -57,10 +57,10 @@ std::string ProtoPacketBuilder::ResolveGameLanguage() {
     return "ENGLISH";
 }
 
-double ProtoPacketBuilder::GetTotalFortifyAlchemy(RE::PlayerCharacter* player) {
-    if (!player || !Util::IsGameSessionReady()) return 0.0;
+float ProtoPacketBuilder::GetTotalFortifyAlchemy(RE::PlayerCharacter* player) {
+    if (!player || !Util::IsGameSessionReady()) return 0.0f;
 
-    double totalBonus = 0.0;
+    float totalBonus = 0.0f;
     if (auto* magicTarget = player->AsMagicTarget()) {
         if (auto* activeEffects = magicTarget->GetActiveEffectList()) {
             for (auto* ae : *activeEffects) {
@@ -80,7 +80,7 @@ double ProtoPacketBuilder::GetTotalFortifyAlchemy(RE::PlayerCharacter* player) {
         }
     }
 
-    if (totalBonus <= 0.0) {
+    if (totalBonus <= 0.0f) {
         if (auto* avOwner = player->AsActorValueOwner()) {
             float mod = avOwner->GetActorValue(RE::ActorValue::kAlchemyModifier);
             float pwr = avOwner->GetActorValue(RE::ActorValue::kAlchemyPowerModifier);
@@ -106,8 +106,8 @@ void ProtoPacketBuilder::FillPlayerAlchemyStats(pb::PlayerCraftingStats* out) {
         float currentSkill = avOwner->GetActorValue(RE::ActorValue::kAlchemy);
         float baseSkill = avOwner->GetBaseActorValue(RE::ActorValue::kAlchemy);
         float effectiveSkill = (currentSkill > 0.0f) ? currentSkill : baseSkill;
-        out->set_skill_level(static_cast<int32_t>(std::round(effectiveSkill)));
-        out->set_fortify_alchemy_total(static_cast<int32_t>(std::round(GetTotalFortifyAlchemy(player))));
+        out->set_skill_level(effectiveSkill);
+        out->set_fortify_alchemy_total(GetTotalFortifyAlchemy(player));
     }
 
     auto hasPerk = [player](RE::FormID id) -> bool {
