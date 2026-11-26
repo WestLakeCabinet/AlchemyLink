@@ -103,3 +103,18 @@ target_link_libraries(
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE src)
+
+if(MSVC)
+    target_compile_options(${PROJECT_NAME} PRIVATE $<$<CONFIG:Release>:/Z7>)
+    target_link_options(${PROJECT_NAME} PRIVATE $<$<CONFIG:Release>:/DEBUG;/OPT:REF;/OPT:ICF>)
+endif()
+
+set(SKYPOTION_DEPLOY_DIR "" CACHE PATH "Optional directory to copy SkyPotionSKSE.dll and .pdb after build")
+if(SKYPOTION_DEPLOY_DIR)
+    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${SKYPOTION_DEPLOY_DIR}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:${PROJECT_NAME}>" "${SKYPOTION_DEPLOY_DIR}/"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_PDB_FILE:${PROJECT_NAME}>" "${SKYPOTION_DEPLOY_DIR}/"
+        COMMENT "Deploying SkyPotionSKSE.dll and .pdb to ${SKYPOTION_DEPLOY_DIR}"
+    )
+endif()
