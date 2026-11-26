@@ -1,9 +1,7 @@
 #include "game/InventoryExtractor.h"
-#include "game/StatExtractor.h"
 #include "server/WebSocketServer.h"
 #include "sync/ProtoPacketBuilder.h"
 #include <chrono>
-#include <thread>
 
 namespace SkyPotion::Game {
 
@@ -31,19 +29,15 @@ void InventoryEventHandler::OnGameSessionLoaded(int attempt) {
         return;
     }
 
+    // AddTask 기반 재시도 + 준비 완료 후 1프레임 추가 지연으로 초기 스크립트/모드 안정화 보장 (detached 스레드 없음)
     taskInterface->AddTask([this, attempt, gen]() {
         if (SkyPotion::g_isShuttingDown.load() || gen != _loadGeneration.load()) {
             return;
         }
 
         if (!Util::IsGameSessionReady()) {
-            if (attempt < 40) {
-                std::thread([this, attempt, gen]() {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                    if (!SkyPotion::g_isShuttingDown.load() && gen == _loadGeneration.load()) {
-                        OnGameSessionLoaded(attempt + 1);
-                    }
-                }).detach();
+            if (attempt < 240) {
+                OnGameSessionLoaded(attempt + 1);
             } else {
                 SKSE::log::warn("InventoryEventHandler: Timed out waiting for game session readiness (attempt={}), releasing loading guard.", attempt);
                 _isLoading.store(false);
@@ -51,8 +45,25 @@ void InventoryEventHandler::OnGameSessionLoaded(int attempt) {
             return;
         }
 
-        _isLoading.store(false);
-        SKSE::log::info("InventoryEventHandler: Game session ready (attempt={}), loading guard released.", attempt);
+        auto* nextTaskInterface = SKSE::GetTaskInterface();
+        if (!nextTaskInterface) {
+            _isLoading.store(false);
+            return;
+        }
+
+        nextTaskInterface->AddTask([this, attempt, gen]() {
+            if (SkyPotion::g_isShuttingDown.load() || gen != _loadGeneration.load()) {
+                return;
+            }
+            if (!Util::IsGameSessionReady()) {
+                if (attempt < 240) {
+                    OnGameSessionLoaded(attempt + 1);
+                    return;
+                }
+            }
+            _isLoading.store(false);
+            SKSE::log::info("InventoryEventHandler: Game session ready (attempt={}), loading guard released after 1-frame settle.", attempt);
+        });
     });
 }
 

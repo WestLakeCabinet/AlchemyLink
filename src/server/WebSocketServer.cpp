@@ -1,8 +1,5 @@
 ﻿#include "server/WebSocketServer.h"
 #include "game/InventoryExtractor.h"
-#include "game/PerkExtractor.h"
-#include "game/StatExtractor.h"
-#include "game/AlchemyDataExtractor.h"
 #include "game/AlchemyController.h"
 #include "sync/ProtoPacketBuilder.h"
 
@@ -93,6 +90,9 @@ namespace SkyPotion::Server {
         void OnRun() {
             // Set suggested timeout settings for the websocket (includes idle keep-alive pings)
             _ws.set_option(websocket::stream_base::timeout::suggested(beast::role_type::server));
+
+            // Cap incoming WebSocket messages at 8 KiB to prevent oversized packet abuse
+            _ws.read_message_max(8 * 1024);
 
             // Identify server in handshake response (permessage-deflate remains disabled by default for Android OkHttp)
             _ws.set_option(websocket::stream_base::decorator(
@@ -713,7 +713,7 @@ namespace SkyPotion::Server {
                 return;
             }
 
-            SKSE::log::info("ScheduleSessionSnapshot: Game session ready (attempt={}), broadcasting snapshots...", attempt);
+            SKSE::log::info("ScheduleSessionSnapshot: Game session ready (attempt={}), deferring 1 frame before snapshot...", attempt);
             BroadcastProtoSnapshot();
         });
     }

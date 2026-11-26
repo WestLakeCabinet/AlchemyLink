@@ -76,14 +76,8 @@ add_library(
     src/server/WebSocketServer.cpp
     src/sync/ProtoPacketBuilder.h
     src/sync/ProtoPacketBuilder.cpp
-    src/game/PerkExtractor.h
-    src/game/PerkExtractor.cpp
     src/game/InventoryExtractor.h
     src/game/InventoryExtractor.cpp
-    src/game/StatExtractor.h
-    src/game/StatExtractor.cpp
-    src/game/AlchemyDataExtractor.h
-    src/game/AlchemyDataExtractor.cpp
     src/game/AlchemyController.h
     src/game/AlchemyController.cpp
 )

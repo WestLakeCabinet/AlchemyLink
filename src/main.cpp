@@ -102,6 +102,7 @@ extern "C" [[maybe_unused]] __declspec(dllexport) BOOL WINAPI DllMain(HINSTANCE 
         SkyPotion::g_isShuttingDown.store(true);
         const bool canJoin = (lpvReserved == nullptr);
         SkyPotion::Game::AlchemyController::StopCrafting(canJoin);
+        SkyPotion::Game::MenuOpenCloseHandler::StopMonitoring(canJoin);
         SkyPotion::Server::WebSocketServer::GetSingleton().Stop();
     }
     return TRUE;

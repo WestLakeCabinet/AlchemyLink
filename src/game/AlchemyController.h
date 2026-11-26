@@ -64,7 +64,7 @@ namespace SkyPotion::Game {
         void Register();
 
         static void StartMonitoring();
-        static void StopMonitoring();
+        static void StopMonitoring(bool waitForExit = true);
         static bool IsMonitoring();
 
         RE::BSEventNotifyControl ProcessEvent(

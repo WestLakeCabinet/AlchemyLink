@@ -878,136 +878,181 @@ namespace SkyPotion::Game {
 
     static std::shared_ptr<MonitorSession> s_monitorSession;
     static std::mutex s_sessionMutex;
+    static std::condition_variable s_monitorCv;
+    static std::thread s_monitorThread;
 
     void MenuOpenCloseHandler::StartMonitoring() {
-        if (!Server::WebSocketServer::GetSingleton().HasConnectedClients()) {
+        if (SkyPotion::g_isShuttingDown.load() ||
+            !Server::WebSocketServer::GetSingleton().HasConnectedClients()) {
             return;
         }
 
         std::shared_ptr<MonitorSession> session;
         {
-            std::lock_guard<std::mutex> lock(s_sessionMutex);
+            std::unique_lock<std::mutex> lock(s_sessionMutex);
             if (s_monitorSession && s_monitorSession->active.load()) {
                 return; // Already monitoring
+            }
+            if (s_monitorThread.joinable()) {
+                std::thread oldThread = std::move(s_monitorThread);
+                lock.unlock();
+                oldThread.join();
+                lock.lock();
+
+                if (s_monitorSession && s_monitorSession->active.load()) {
+                    return;
+                }
             }
             if (s_monitorSession) {
                 s_monitorSession->active.store(false);
             }
             s_monitorSession = std::make_shared<MonitorSession>();
             session = s_monitorSession;
-        }
 
-        std::thread([session]() {
-            while (session->active.load() && !SkyPotion::g_isShuttingDown.load()) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(250));
+            s_monitorThread = std::thread([session]() {
+                struct MonitorTaskState {
+                    std::atomic<bool> completed{ false };
+                    std::atomic<bool> keepRunning{ false };
+                };
 
-                if (!session->active.load() || SkyPotion::g_isShuttingDown.load() ||
-                    !Server::WebSocketServer::GetSingleton().HasConnectedClients()) {
-                    break;
-                }
-
-                auto* taskInterface = SKSE::GetTaskInterface();
-                if (!taskInterface) {
-                    break;
-                }
-
-                auto promise = std::make_shared<std::promise<bool>>();
-                auto future = promise->get_future();
-
-                taskInterface->AddTask([session, promise]() {
-                    if (!session->active.load() || SkyPotion::g_isShuttingDown.load() || !Util::IsGameSessionReady() ||
-                        !Server::WebSocketServer::GetSingleton().HasConnectedClients()) {
-                        promise->set_value(false);
-                        return;
-                    }
-
-                    ++session->checkCount;
-
-                    auto* ui = RE::UI::GetSingleton();
-                    if (!ui || !ui->IsMenuOpen(RE::CraftingMenu::MENU_NAME)) {
-                        promise->set_value(false);
-                        return;
-                    }
-
-                    auto* alchemyMenu = AlchemyController::GetAlchemyMenu();
-                    if (!alchemyMenu) {
-                        if (session->checkCount >= 10) {
-                            SKSE::log::info("CraftingMenu: Active submenu is not AlchemyMenu. Stopping monitor.");
-                            promise->set_value(false);
-                        } else {
-                            promise->set_value(true);
+                while (session->active.load() && !SkyPotion::g_isShuttingDown.load()) {
+                    {
+                        std::unique_lock<std::mutex> delayLock(s_sessionMutex);
+                        if (s_monitorCv.wait_for(delayLock, std::chrono::milliseconds(250), [&session]() {
+                            return !session->active.load() || SkyPotion::g_isShuttingDown.load();
+                        })) {
+                            break;
                         }
-                        return;
                     }
 
-                    bool isReady = AlchemyController::IsAlchemyItemListReady();
+                    if (!session->active.load() || SkyPotion::g_isShuttingDown.load() ||
+                        !Server::WebSocketServer::GetSingleton().HasConnectedClients()) {
+                        break;
+                    }
 
-                    int64_t nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-                        std::chrono::system_clock::now().time_since_epoch()).count();
+                    auto* taskInterface = SKSE::GetTaskInterface();
+                    if (!taskInterface) {
+                        break;
+                    }
 
-                    if (isReady && !session->wasListReady) {
-                        session->wasListReady = true;
-                        session->lastSelected = AlchemyController::GetSelectedIngredientFormIDs();
-                        SKSE::log::info("CraftingMenu: Alchemy ItemList OPENED! (cppEntries={}, check={})",
-                            alchemyMenu->ingredientEntries.size(), session->checkCount);
+                    auto taskState = std::make_shared<MonitorTaskState>();
+                    taskInterface->AddTask([session, taskState]() {
+                        auto finish = [&taskState](bool keepRunning) {
+                            taskState->keepRunning.store(keepRunning);
+                            taskState->completed.store(true);
+                            if (!SkyPotion::g_isShuttingDown.load()) {
+                                s_monitorCv.notify_all();
+                            }
+                        };
 
-                        Server::WebSocketServer::GetSingleton().BroadcastBinary(
-                            Sync::ProtoPacketBuilder::BuildAlchemyBenchState(true, session->lastSelected)
-                        );
-                    } else if (!isReady && session->wasListReady) {
-                        session->wasListReady = false;
-                        session->lastSelected.clear();
-                        SKSE::log::info("CraftingMenu: Alchemy ItemList CLOSED (back to categories).");
+                        if (!session->active.load() || SkyPotion::g_isShuttingDown.load() || !Util::IsGameSessionReady() ||
+                            !Server::WebSocketServer::GetSingleton().HasConnectedClients()) {
+                            finish(false);
+                            return;
+                        }
 
-                        Server::WebSocketServer::GetSingleton().BroadcastBinary(
-                            Sync::ProtoPacketBuilder::BuildAlchemyBenchState(false, {})
-                        );
-                    } else if (isReady && session->wasListReady) {
-                        auto currentSelected = AlchemyController::GetSelectedIngredientFormIDs();
-                        if (currentSelected != session->lastSelected) {
-                            session->lastSelected = currentSelected;
-                            SKSE::log::info("CraftingMenu: Alchemy selection changed in Skyrim (count={})",
-                                session->lastSelected.size());
+                        ++session->checkCount;
+
+                        auto* ui = RE::UI::GetSingleton();
+                        if (!ui || !ui->IsMenuOpen(RE::CraftingMenu::MENU_NAME)) {
+                            finish(false);
+                            return;
+                        }
+
+                        auto* alchemyMenu = AlchemyController::GetAlchemyMenu();
+                        if (!alchemyMenu) {
+                            if (session->checkCount >= 10) {
+                                SKSE::log::info("CraftingMenu: Active submenu is not AlchemyMenu. Stopping monitor.");
+                                finish(false);
+                            } else {
+                                finish(true);
+                            }
+                            return;
+                        }
+
+                        bool isReady = AlchemyController::IsAlchemyItemListReady();
+
+                        if (isReady && !session->wasListReady) {
+                            session->wasListReady = true;
+                            session->lastSelected = AlchemyController::GetSelectedIngredientFormIDs();
+                            SKSE::log::info("CraftingMenu: Alchemy ItemList OPENED! (cppEntries={}, check={})",
+                                alchemyMenu->ingredientEntries.size(), session->checkCount);
 
                             Server::WebSocketServer::GetSingleton().BroadcastBinary(
                                 Sync::ProtoPacketBuilder::BuildAlchemyBenchState(true, session->lastSelected)
                             );
+                        } else if (!isReady && session->wasListReady) {
+                            session->wasListReady = false;
+                            session->lastSelected.clear();
+                            SKSE::log::info("CraftingMenu: Alchemy ItemList CLOSED (back to categories).");
+
+                            Server::WebSocketServer::GetSingleton().BroadcastBinary(
+                                Sync::ProtoPacketBuilder::BuildAlchemyBenchState(false, {})
+                            );
+                        } else if (isReady && session->wasListReady) {
+                            auto currentSelected = AlchemyController::GetSelectedIngredientFormIDs();
+                            if (currentSelected != session->lastSelected) {
+                                session->lastSelected = currentSelected;
+                                SKSE::log::info("CraftingMenu: Alchemy selection changed in Skyrim (count={})",
+                                    session->lastSelected.size());
+
+                                Server::WebSocketServer::GetSingleton().BroadcastBinary(
+                                    Sync::ProtoPacketBuilder::BuildAlchemyBenchState(true, session->lastSelected)
+                                );
+                            }
+                        }
+
+                        finish(true);
+                    });
+
+                    // Wait for task completion. If main thread is paused (Alt-Tab, System Menu, etc.),
+                    // keep waiting in 250ms slices without accumulating duplicate tasks, while waking immediately on stop/shutdown.
+                    bool taskDone = false;
+                    while (session->active.load() && !SkyPotion::g_isShuttingDown.load() &&
+                           Server::WebSocketServer::GetSingleton().HasConnectedClients()) {
+                        std::unique_lock<std::mutex> waitLock(s_sessionMutex);
+                        if (s_monitorCv.wait_for(waitLock, std::chrono::milliseconds(250), [&session, &taskState]() {
+                            return taskState->completed.load() ||
+                                !session->active.load() ||
+                                SkyPotion::g_isShuttingDown.load();
+                        })) {
+                            if (taskState->completed.load()) {
+                                taskDone = true;
+                                if (!taskState->keepRunning.load()) {
+                                    session->active.store(false);
+                                    return;
+                                }
+                            }
+                            break;
                         }
                     }
 
-                    promise->set_value(true);
-                });
-
-                // Wait for task completion. If main thread is paused (Alt-Tab, System Menu, etc.),
-                // keep waiting without killing the monitor thread or accumulating duplicate tasks.
-                bool taskDone = false;
-                while (session->active.load() && !SkyPotion::g_isShuttingDown.load() &&
-                       Server::WebSocketServer::GetSingleton().HasConnectedClients()) {
-                    if (future.wait_for(std::chrono::milliseconds(250)) == std::future_status::ready) {
-                        taskDone = true;
-                        if (!future.get()) {
-                            // Menu closed or invalid state, exit cleanly
-                            session->active.store(false);
-                            return;
-                        }
-                        break;
+                    if (!taskDone) {
+                        break; // Shutting down, session cancelled, or client disconnected
                     }
                 }
 
-                if (!taskDone) {
-                    break; // Shutting down, session cancelled, or client disconnected
-                }
-            }
-
-            session->active.store(false);
-        }).detach();
+                session->active.store(false);
+            });
+        }
     }
 
-    void MenuOpenCloseHandler::StopMonitoring() {
-        std::lock_guard<std::mutex> lock(s_sessionMutex);
-        if (s_monitorSession) {
-            s_monitorSession->active.store(false);
-            s_monitorSession.reset();
+    void MenuOpenCloseHandler::StopMonitoring(bool waitForExit) {
+        std::thread threadToJoin;
+        {
+            std::lock_guard<std::mutex> lock(s_sessionMutex);
+            if (s_monitorSession) {
+                s_monitorSession->active.store(false);
+                s_monitorSession.reset();
+            }
+            if (waitForExit && s_monitorThread.joinable() &&
+                std::this_thread::get_id() != s_monitorThread.get_id()) {
+                threadToJoin = std::move(s_monitorThread);
+            }
+        }
+        s_monitorCv.notify_all();
+        if (threadToJoin.joinable()) {
+            threadToJoin.join();
         }
     }
 
@@ -1020,6 +1065,29 @@ namespace SkyPotion::Game {
         const RE::MenuOpenCloseEvent* a_event,
         RE::BSTEventSource<RE::MenuOpenCloseEvent>*) {
         if (!a_event) return RE::BSEventNotifyControl::kContinue;
+
+        if (a_event->menuName == RE::LoadingMenu::MENU_NAME) {
+            if (a_event->opening) {
+                SKSE::log::info("MenuOpenCloseEvent: LoadingMenu opening. Setting loading guard and stopping craft/monitor.");
+                InventoryEventHandler::GetSingleton()->SetLoading(true);
+                Server::WebSocketServer::GetSingleton().CancelScheduledSnapshot();
+                AlchemyController::StopCrafting();
+                StopMonitoring();
+
+                if (Server::WebSocketServer::GetSingleton().HasConnectedClients()) {
+                    Server::WebSocketServer::GetSingleton().BroadcastBinary(
+                        Sync::ProtoPacketBuilder::BuildAlchemyBenchState(false, {})
+                    );
+                }
+            } else {
+                SKSE::log::info("MenuOpenCloseEvent: LoadingMenu closed. Scheduling delayed activation and session snapshot.");
+                InventoryEventHandler::GetSingleton()->OnGameSessionLoaded();
+                if (Server::WebSocketServer::GetSingleton().HasConnectedClients()) {
+                    Server::WebSocketServer::GetSingleton().ScheduleSessionSnapshot();
+                }
+            }
+            return RE::BSEventNotifyControl::kContinue;
+        }
 
         // If no clients are connected to WebSocket, do absolutely nothing!
         if (!Server::WebSocketServer::GetSingleton().HasConnectedClients()) {
@@ -1047,22 +1115,6 @@ namespace SkyPotion::Game {
             Server::WebSocketServer::GetSingleton().BroadcastBinary(
                 Sync::ProtoPacketBuilder::BuildAlchemyBenchState(false, {})
             );
-            return RE::BSEventNotifyControl::kContinue;
-        }
-
-        if (a_event->menuName == RE::LoadingMenu::MENU_NAME) {
-            if (a_event->opening) {
-                SKSE::log::info("MenuOpenCloseEvent: LoadingMenu opening. Stopping craft and monitor session.");
-                AlchemyController::StopCrafting();
-                StopMonitoring();
-
-                Server::WebSocketServer::GetSingleton().BroadcastBinary(
-                    Sync::ProtoPacketBuilder::BuildAlchemyBenchState(false, {})
-                );
-            } else {
-                SKSE::log::info("MenuOpenCloseEvent: LoadingMenu closed. Scheduling session snapshot.");
-                Server::WebSocketServer::GetSingleton().ScheduleSessionSnapshot();
-            }
             return RE::BSEventNotifyControl::kContinue;
         }
 
