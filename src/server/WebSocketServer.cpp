@@ -336,6 +336,7 @@ namespace SkyPotion::Server {
 
     struct WebSocketServer::Impl {
         net::io_context ioc{1};
+        net::steady_timer snapshotTimer{ioc};
         std::shared_ptr<Listener> listener;
         std::thread ioThread;
         std::mutex sessionsMutex;
@@ -402,6 +403,7 @@ namespace SkyPotion::Server {
         if (!_running.exchange(false)) return;
 
         SKSE::log::info("Stopping SkyPotion WebSocketServer (Boost.Beast)...");
+        _snapshotGeneration.fetch_add(1, std::memory_order_relaxed);
         _clientCount.store(0, std::memory_order_relaxed);
 
         if (_impl) {
@@ -412,11 +414,12 @@ namespace SkyPotion::Server {
                 _impl->sessions.clear();
             }
 
-            if (_impl->listener) {
-                net::post(_impl->ioc, [listener = _impl->listener]() {
-                    listener->Stop();
-                });
-            }
+            net::post(_impl->ioc, [impl = _impl.get()]() {
+                impl->snapshotTimer.cancel();
+                if (impl->listener) {
+                    impl->listener->Stop();
+                }
+            });
 
             for (auto& s : activeSessions) {
                 if (s) {
@@ -646,22 +649,64 @@ namespace SkyPotion::Server {
         });
     }
 
+    void WebSocketServer::CancelScheduledSnapshot() {
+        _snapshotGeneration.fetch_add(1, std::memory_order_relaxed);
+        if (_running.load() && _impl) {
+            net::post(_impl->ioc, [this]() {
+                if (_running.load() && _impl) {
+                    _impl->snapshotTimer.cancel();
+                }
+            });
+        }
+    }
+
     void WebSocketServer::ScheduleSessionSnapshot(int attempt) {
-        if (!HasConnectedClients()) return;
+        if (SkyPotion::g_isShuttingDown.load() || !_running.load() || !_impl || !HasConnectedClients()) {
+            return;
+        }
+
+        const uint64_t gen = _snapshotGeneration.fetch_add(1, std::memory_order_relaxed) + 1;
+        net::post(_impl->ioc, [this]() {
+            if (_running.load() && _impl) {
+                _impl->snapshotTimer.cancel();
+            }
+        });
+
+        ScheduleSessionSnapshotWithGen(attempt, gen);
+    }
+
+    void WebSocketServer::ScheduleSessionSnapshotWithGen(int attempt, uint64_t gen) {
+        if (SkyPotion::g_isShuttingDown.load() || !_running.load() || !_impl ||
+            !HasConnectedClients() || gen != _snapshotGeneration.load(std::memory_order_relaxed)) {
+            return;
+        }
 
         auto* taskInterface = SKSE::GetTaskInterface();
         if (!taskInterface) return;
 
-        taskInterface->AddTask([this, attempt]() {
-            if (!_running.load() || !_impl || !HasConnectedClients()) return;
+        taskInterface->AddTask([this, attempt, gen]() {
+            if (SkyPotion::g_isShuttingDown.load() || !_running.load() || !_impl ||
+                !HasConnectedClients() || gen != _snapshotGeneration.load(std::memory_order_relaxed)) {
+                return;
+            }
 
             if (!Util::IsGameSessionReady()) {
                 if (attempt < 20) {
                     // 寃뚯엫 ?몄뀡 以鍮?LoadingMenu ?ロ옒, 3D 濡쒕뱶 ?? ?湲????ъ떆??(100ms 媛꾧꺽, 理쒕? 2珥?
-                    std::thread([this, attempt]() {
-                        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                        ScheduleSessionSnapshot(attempt + 1);
-                    }).detach();
+                    net::post(_impl->ioc, [this, attempt, gen]() {
+                        if (SkyPotion::g_isShuttingDown.load() || !_running.load() || !_impl ||
+                            !HasConnectedClients() || gen != _snapshotGeneration.load(std::memory_order_relaxed)) {
+                            return;
+                        }
+
+                        _impl->snapshotTimer.expires_after(std::chrono::milliseconds(100));
+                        _impl->snapshotTimer.async_wait([this, attempt, gen](const beast::error_code& ec) {
+                            if (ec == net::error::operation_aborted || ec) {
+                                return;
+                            }
+                            ScheduleSessionSnapshotWithGen(attempt + 1, gen);
+                        });
+                    });
                 } else {
                     SKSE::log::warn("ScheduleSessionSnapshot: Timed out waiting for game session (attempt={})", attempt);
                 }

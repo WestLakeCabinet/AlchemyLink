@@ -54,6 +54,7 @@ namespace {
         case SKSE::MessagingInterface::kPreLoadGame:
             SKSE::log::info("SKSE Message: kPreLoadGame. Halting any active craft.");
             SkyPotion::Game::InventoryEventHandler::GetSingleton()->SetLoading(true);
+            SkyPotion::Server::WebSocketServer::GetSingleton().CancelScheduledSnapshot();
             SkyPotion::Game::AlchemyController::StopCrafting();
             SKSE::log::info("SKSE Message: kPreLoadGame completed.");
             break;
