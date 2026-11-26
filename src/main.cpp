@@ -61,7 +61,7 @@ namespace {
         case SKSE::MessagingInterface::kPostLoadGame:
         case SKSE::MessagingInterface::kNewGame:
             SKSE::log::info("Game session started or loaded. Scheduling session snapshot.");
-            SkyPotion::Game::InventoryEventHandler::GetSingleton()->SetLoading(false);
+            SkyPotion::Game::InventoryEventHandler::GetSingleton()->OnGameSessionLoaded();
             SkyPotion::Server::WebSocketServer::GetSingleton().ScheduleSessionSnapshot();
             break;
 

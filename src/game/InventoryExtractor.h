@@ -16,7 +16,8 @@ public:
     void Register();
 
     // 로딩 중 이벤트 무시용 상태 제어
-    void SetLoading(bool loading) { _isLoading.store(loading); }
+    void SetLoading(bool loading);
+    void OnGameSessionLoaded(int attempt = 0);
 
     RE::BSEventNotifyControl ProcessEvent(
         const RE::TESContainerChangedEvent* a_event,
@@ -34,6 +35,7 @@ public:
 
 private:
     std::atomic<bool> _isLoading{ true }; // 초기값 true (게임 로드 완료 전까지 차단)
+    std::atomic<uint64_t> _loadGeneration{ 0 };
     std::atomic<bool> _syncPending{ false };
     std::atomic<int64_t> _lastSyncTimeMs{ 0 };
 

@@ -3,12 +3,57 @@
 #include "server/WebSocketServer.h"
 #include "sync/ProtoPacketBuilder.h"
 #include <chrono>
+#include <thread>
 
 namespace SkyPotion::Game {
 
 InventoryEventHandler* InventoryEventHandler::GetSingleton() {
     static InventoryEventHandler instance;
     return &instance;
+}
+
+void InventoryEventHandler::SetLoading(bool loading) {
+    if (loading) {
+        _loadGeneration.fetch_add(1);
+    }
+    _isLoading.store(loading);
+}
+
+void InventoryEventHandler::OnGameSessionLoaded(int attempt) {
+    if (SkyPotion::g_isShuttingDown.load()) {
+        return;
+    }
+
+    const uint64_t gen = _loadGeneration.load();
+    auto* taskInterface = SKSE::GetTaskInterface();
+    if (!taskInterface) {
+        _isLoading.store(false);
+        return;
+    }
+
+    taskInterface->AddTask([this, attempt, gen]() {
+        if (SkyPotion::g_isShuttingDown.load() || gen != _loadGeneration.load()) {
+            return;
+        }
+
+        if (!Util::IsGameSessionReady()) {
+            if (attempt < 40) {
+                std::thread([this, attempt, gen]() {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                    if (!SkyPotion::g_isShuttingDown.load() && gen == _loadGeneration.load()) {
+                        OnGameSessionLoaded(attempt + 1);
+                    }
+                }).detach();
+            } else {
+                SKSE::log::warn("InventoryEventHandler: Timed out waiting for game session readiness (attempt={}), releasing loading guard.", attempt);
+                _isLoading.store(false);
+            }
+            return;
+        }
+
+        _isLoading.store(false);
+        SKSE::log::info("InventoryEventHandler: Game session ready (attempt={}), loading guard released.", attempt);
+    });
 }
 
 void InventoryEventHandler::Register() {
@@ -25,16 +70,20 @@ void InventoryEventHandler::Register() {
 RE::BSEventNotifyControl InventoryEventHandler::ProcessEvent(
     const RE::TESContainerChangedEvent* a_event,
     RE::BSTEventSource<RE::TESContainerChangedEvent>*) {
-    if (!a_event || !Server::WebSocketServer::GetSingleton().HasConnectedClients()) {
+    if (!a_event || _isLoading.load() || SkyPotion::g_isShuttingDown.load()) {
         return RE::BSEventNotifyControl::kContinue;
     }
 
-    if (_isLoading.load() || !Util::IsGameSessionReady()) {
+    if (!Server::WebSocketServer::GetSingleton().HasConnectedClients()) {
         return RE::BSEventNotifyControl::kContinue;
     }
 
     constexpr RE::FormID PLAYER_FORM_ID = 0x00000014;
     if (a_event->oldContainer != PLAYER_FORM_ID && a_event->newContainer != PLAYER_FORM_ID) {
+        return RE::BSEventNotifyControl::kContinue;
+    }
+
+    if (!Util::IsGameSessionReady()) {
         return RE::BSEventNotifyControl::kContinue;
     }
 
@@ -55,16 +104,21 @@ RE::BSEventNotifyControl InventoryEventHandler::ProcessEvent(
 RE::BSEventNotifyControl InventoryEventHandler::ProcessEvent(
     const RE::TESEquipEvent* a_event,
     RE::BSTEventSource<RE::TESEquipEvent>*) {
-    if (!a_event || !Server::WebSocketServer::GetSingleton().HasConnectedClients()) {
+    if (!a_event || _isLoading.load() || SkyPotion::g_isShuttingDown.load()) {
         return RE::BSEventNotifyControl::kContinue;
     }
 
-    if (_isLoading.load() || !Util::IsGameSessionReady()) {
+    if (!Server::WebSocketServer::GetSingleton().HasConnectedClients()) {
         return RE::BSEventNotifyControl::kContinue;
     }
 
-    auto* actor = a_event->actor.get();
-    if (!actor || !actor->IsPlayerRef()) {
+    // 포인터 역참조나 가상 함수 호출 전에 플레이어 싱글톤 포인터와 직접 비교
+    auto* player = RE::PlayerCharacter::GetSingleton();
+    if (!player || a_event->actor.get() != player) {
+        return RE::BSEventNotifyControl::kContinue;
+    }
+
+    if (!Util::IsGameSessionReady()) {
         return RE::BSEventNotifyControl::kContinue;
     }
 
@@ -77,7 +131,8 @@ RE::BSEventNotifyControl InventoryEventHandler::ProcessEvent(
 }
 
 void InventoryEventHandler::RequestInventorySync() {
-    if (!Server::WebSocketServer::GetSingleton().HasConnectedClients()) {
+    if (_isLoading.load() || SkyPotion::g_isShuttingDown.load() ||
+        !Server::WebSocketServer::GetSingleton().HasConnectedClients()) {
         return;
     }
 
@@ -86,12 +141,16 @@ void InventoryEventHandler::RequestInventorySync() {
             taskInterface->AddTask([this]() {
                 ExecuteInventorySync();
             });
+        } else {
+            _syncPending.store(false);
         }
     }
 }
 
 void InventoryEventHandler::ExecuteInventorySync() {
-    if (!Server::WebSocketServer::GetSingleton().HasConnectedClients() || !Util::IsGameSessionReady()) {
+    if (_isLoading.load() || SkyPotion::g_isShuttingDown.load() ||
+        !Server::WebSocketServer::GetSingleton().HasConnectedClients() ||
+        !Util::IsGameSessionReady()) {
         _syncPending.store(false);
         return;
     }
@@ -107,11 +166,15 @@ void InventoryEventHandler::ExecuteInventorySync() {
     _lastSyncTimeMs.store(nowMs);
 
     auto bin = Sync::ProtoPacketBuilder::BuildInventoryFullSnapshot();
-    Server::WebSocketServer::GetSingleton().BroadcastBinary(bin);
+    if (!bin.empty()) {
+        Server::WebSocketServer::GetSingleton().BroadcastBinary(bin);
+    }
 }
 
 void InventoryEventHandler::ExecuteAlchemyStatsSync() {
-    if (!Server::WebSocketServer::GetSingleton().HasConnectedClients() || !Util::IsGameSessionReady()) {
+    if (_isLoading.load() || SkyPotion::g_isShuttingDown.load() ||
+        !Server::WebSocketServer::GetSingleton().HasConnectedClients() ||
+        !Util::IsGameSessionReady()) {
         _alchemySyncPending.store(false);
         return;
     }
@@ -127,11 +190,14 @@ void InventoryEventHandler::ExecuteAlchemyStatsSync() {
     _lastAlchemySyncTimeMs.store(nowMs);
 
     auto bin = Sync::ProtoPacketBuilder::BuildPlayerAlchemyStats();
-    Server::WebSocketServer::GetSingleton().BroadcastBinary(bin);
+    if (!bin.empty()) {
+        Server::WebSocketServer::GetSingleton().BroadcastBinary(bin);
+    }
 }
 
 void InventoryEventHandler::RequestAlchemyStatsSync() {
-    if (!Server::WebSocketServer::GetSingleton().HasConnectedClients()) {
+    if (_isLoading.load() || SkyPotion::g_isShuttingDown.load() ||
+        !Server::WebSocketServer::GetSingleton().HasConnectedClients()) {
         return;
     }
 
@@ -140,6 +206,8 @@ void InventoryEventHandler::RequestAlchemyStatsSync() {
             taskInterface->AddTask([this]() {
                 ExecuteAlchemyStatsSync();
             });
+        } else {
+            _alchemySyncPending.store(false);
         }
     }
 }
