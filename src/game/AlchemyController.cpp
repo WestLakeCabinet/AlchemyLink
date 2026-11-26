@@ -735,6 +735,7 @@ namespace SkyPotion::Game {
             }
             if (!found) {
                 result.missingIngredients.push_back(std::format("0x{:08X}", addId));
+                result.missingFormIds.push_back(addId);
             }
         }
 
@@ -754,13 +755,24 @@ namespace SkyPotion::Game {
         }
 
         // 7. Auto-craft if requested
-        if (autoCraft && result.missingIngredients.empty() && result.selectedIngredients.size() >= 2) {
-            return CraftPotions(craftCount);
-        } else {
-            result.message = std::format("Selected {} (active slots: {})",
-                result.selectedIngredients.size(), alchemyMenu->selectedIndexes.size());
+        if (!result.missingFormIds.empty()) {
+            result.success = false;
+            result.message = "OUT_OF_STOCK";
+            return result;
         }
 
+        if (autoCraft && result.selectedIngredients.size() >= 2) {
+            return CraftPotions(craftCount);
+        }
+
+        if (autoCraft) {
+            result.success = false;
+            result.message = "Not enough ingredients selected to craft";
+            return result;
+        }
+
+        result.message = std::format("Selected {} (active slots: {})",
+            result.selectedIngredients.size(), alchemyMenu->selectedIndexes.size());
         result.success = true;
         return result;
     }

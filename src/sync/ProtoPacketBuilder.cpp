@@ -337,7 +337,8 @@ std::string ProtoPacketBuilder::BuildCommandResult(
     uint64_t requestId,
     bool success,
     int32_t craftedCount,
-    const std::string& errorCode
+    const std::string& errorCode,
+    const std::vector<RE::FormID>& missingFormIds
 ) {
     pb::GameSyncPacket packet;
     packet.set_protocol_version(kProtocolVersion);
@@ -348,6 +349,9 @@ std::string ProtoPacketBuilder::BuildCommandResult(
     res->set_success(success);
     res->set_crafted_count(craftedCount);
     res->set_error_code(errorCode);
+    for (RE::FormID id : missingFormIds) {
+        res->add_missing_form_ids(id);
+    }
     return packet.SerializeAsString();
 }
 

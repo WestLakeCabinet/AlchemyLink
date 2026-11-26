@@ -494,7 +494,7 @@ namespace SkyPotion::Server {
             return;
         }
 
-        // 1) ?щ즺 ?좏깮 ?숆린??(Fire-and-Forget)
+        // 1) 재료 선택 동기화 (CommandResult 반환)
         if (cmd.has_select_ingredients()) {
             SKSE::log::info("HandleProtoCommand: select_ingredients (reqId={}, count={})",
                 reqId, cmd.select_ingredients().form_ids_size());
@@ -504,22 +504,36 @@ namespace SkyPotion::Server {
                 formIds.push_back(static_cast<RE::FormID>(id));
             }
 
-            taskInterface->AddUITask([formIds = std::move(formIds)]() {
-                try {
+            DispatchTaskWithTimeout<std::string>(
+                session,
+                /*useUITask=*/true,
+                std::chrono::milliseconds(2500),
+                [reqId, formIds = std::move(formIds)]() -> std::string {
                     if (!Util::IsGameSessionReady() || !Game::AlchemyController::IsAlchemyMenuOpen()) {
-                        return;
+                        return Sync::ProtoPacketBuilder::BuildCommandResult(reqId, false, 0, "BENCH_CLOSED");
                     }
+
                     if (formIds.empty()) {
-                        Game::AlchemyController::ClearSelectedIngredients();
-                    } else {
-                        Game::AlchemyController::SelectIngredients(formIds, /*autoCraft=*/false, /*craftCount=*/0);
+                        bool ok = Game::AlchemyController::ClearSelectedIngredients();
+                        return Sync::ProtoPacketBuilder::BuildCommandResult(
+                            reqId, ok, 0, ok ? "" : "SELECT_FAILED");
                     }
-                } catch (const std::exception& e) {
-                    SKSE::log::error("HandleProtoCommand select_ingredients exception: {}", e.what());
-                } catch (...) {
-                    SKSE::log::error("HandleProtoCommand select_ingredients unknown exception");
-                }
-            });
+
+                    auto result = Game::AlchemyController::SelectIngredients(formIds, /*autoCraft=*/false, /*craftCount=*/0);
+                    std::string errorCode = result.success
+                        ? ""
+                        : (result.message.empty() ? "SELECT_FAILED" : result.message);
+
+                    return Sync::ProtoPacketBuilder::BuildCommandResult(
+                        reqId, result.success, 0, errorCode, result.missingFormIds);
+                },
+                [](Session& s, std::string responseBytes) {
+                    s.SendBinary(std::move(responseBytes));
+                },
+                [reqId](Session& s) {
+                    SKSE::log::warn("HandleProtoCommand: select_ingredients (reqId={}) timed out", reqId);
+                    s.SendBinary(Sync::ProtoPacketBuilder::BuildCommandResult(reqId, false, 0, "TIMEOUT"));
+                });
             return;
         }
 
@@ -552,7 +566,8 @@ namespace SkyPotion::Server {
                         Game::InventoryEventHandler::GetSingleton()->RequestAlchemyStatsSync();
                     }
 
-                    return Sync::ProtoPacketBuilder::BuildCommandResult(reqId, result.success, result.craftedCount, errorCode);
+                    return Sync::ProtoPacketBuilder::BuildCommandResult(
+                        reqId, result.success, result.craftedCount, errorCode, result.missingFormIds);
                 },
                 [](Session& s, std::string responseBytes) {
                     s.SendBinary(std::move(responseBytes));

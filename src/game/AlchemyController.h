@@ -9,6 +9,7 @@ namespace SkyPotion::Game {
         std::string message;
         std::vector<std::string> selectedIngredients;
         std::vector<std::string> missingIngredients;
+        std::vector<RE::FormID> missingFormIds;
         bool crafted{ false };
         int craftedCount{ 0 };
     };

@@ -31,7 +31,8 @@ public:
         uint64_t requestId,
         bool success,
         int32_t craftedCount = 0,
-        const std::string& errorCode = ""
+        const std::string& errorCode = "",
+        const std::vector<RE::FormID>& missingFormIds = {}
     );
 
 private:

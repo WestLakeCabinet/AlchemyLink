@@ -452,6 +452,7 @@ message CommandResult {
   int32 crafted_count = 3;             // 실제 제조/강화 완료 수량
   string error_code = 4;               // 에러 코드 (예: "BENCH_CLOSED", "OUT_OF_STOCK", "SPELL_NOT_FOUND", "COOLDOWN")
   string message = 5;                  // [NEW] 사람이 읽을 수 있는 상세 결과 메시지
+  repeated uint32 missing_form_ids = 6; // 재료 부족 시 누락된 재료의 FormID 목록
 }
 
 // ============================================================================
