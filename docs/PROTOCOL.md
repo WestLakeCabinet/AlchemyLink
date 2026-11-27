@@ -4,14 +4,14 @@ AlchemyLink communicates with companion clients (such as the **SkyPotion** Andro
 
 - **Schema**: [`proto/game_sync.proto`](../proto/game_sync.proto)
 - **Package**: `com.dolzzo.skypotion.proto.sync`
-- **Default Endpoint**: `ws://<host>:8765`
+- **Default Endpoint**: `ws://<host>:47778`
 - **Frame Type**: Binary WebSocket frames (`GameSyncPacket` / `AppCommandPacket`)
 
 ---
 
 ## 1. Connection & Message Flow
 
-1. **Connect**: The client connects to the plugin's WebSocket server (default port `8765`).
+1. **Connect**: The client connects to the plugin's WebSocket server (default port `47778`).
 2. **Initial Snapshot**: On connection or save load, the plugin sends a `GameSyncPacket` containing `CatalogSnapshot` (character profile, game language, master data for ingredients/effects/enchantments/recipes/spells/shouts/loadouts, and `initial_stats`).
 3. **Real-Time Sync**: As in-game state changes (inventory, stats, crafting bench UI, vitals, equipped spells, active loadouts), the plugin pushes `GameSyncPacket` updates.
 4. **Keep-Alive**: `Heartbeat` (`seq`) messages are exchanged to keep the connection alive.

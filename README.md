@@ -9,7 +9,7 @@ A lightweight WebSocket companion SKSE plugin for **The Elder Scrolls V: Skyrim 
 
 ## 🌟 Features
 
-- **Built-in WebSocket Server (Default Port: `8765`)**:
+- **Built-in WebSocket Server (Default Port: `47778`)**:
   - Starts automatically when Skyrim launches—no external helper process required.
   - Uses compact binary **Protobuf** serialization (`GameSyncPacket` / `AppCommandPacket`).
 - **Master Data & Profile Snapshot (`CatalogSnapshot`)**:
@@ -69,4 +69,24 @@ xmake
 2. Required dependencies:
    - **SKSE64** (Skyrim Script Extender)
    - **Address Library for SKSE Plugins** (matching your Skyrim version)
-3. Launch Skyrim via SKSE64. The WebSocket server will listen on port `8765` by default and accept connections from companion apps.
+3. Launch Skyrim via SKSE64. The WebSocket server will listen on port `47778` by default and accept connections from companion apps.
+
+---
+
+## ⚙️ Configuration (`AlchemyLink.ini`)
+
+On first launch, AlchemyLink automatically creates `Data/SKSE/Plugins/AlchemyLink.ini` if it does not exist:
+
+```ini
+[Server]
+; WebSocket port (default: 47778)
+Port = 47778
+
+; Binding IP address (default: 0.0.0.0 for all interfaces, 127.0.0.1 for localhost only)
+BindAddress = 0.0.0.0
+```
+
+| Key | Default | Description |
+| :--- | :---: | :--- |
+| `Port` | `47778` | WebSocket server port (`1`–`65535`). |
+| `BindAddress` | `0.0.0.0` | Network interface to bind (`0.0.0.0` for LAN/mobile access, `127.0.0.1` for local-only). |
