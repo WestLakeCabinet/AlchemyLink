@@ -234,6 +234,8 @@ message EquipmentEntry {
   uint32 attack_damage = 10;           // 공격력 (Weapon일 경우)
   double weight = 11;                  // 무게
   int32 value = 12;                    // 가치 (Gold)
+  bool is_weapon = 13;                 // true: 무기, false: 방어구/장신구
+  repeated uint32 keyword_form_ids = 14; // 장비 키워드 FormID 목록 (인챈트 호환 판별용)
 }
 
 // ----------------------------------------------------------------------------

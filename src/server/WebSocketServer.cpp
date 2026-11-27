@@ -579,6 +579,62 @@ namespace SkyPotion::Server {
                     SKSE::log::warn("HandleProtoCommand: craft_potion (reqId={}) timed out", reqId);
                     s.SendBinary(Sync::ProtoPacketBuilder::BuildCommandResult(reqId, false, 0, "TIMEOUT"));
                 });
+            return;
+        }
+
+        // 3) 마법부여 제작 요청 (비동기 응답 -> CommandResult 반환)
+        if (cmd.has_craft_enchantment()) {
+            const auto& req = cmd.craft_enchantment();
+            const RE::FormID itemFormId = static_cast<RE::FormID>(req.item_form_id());
+            const RE::FormID soulGemFormId = static_cast<RE::FormID>(req.soul_gem_form_id());
+            const std::string customName = req.custom_name();
+            const float magnitudeSlider = req.magnitude_slider();
+
+            std::vector<RE::FormID> effectIds;
+            effectIds.reserve(req.effect_form_ids_size());
+            for (uint32_t id : req.effect_form_ids()) {
+                effectIds.push_back(static_cast<RE::FormID>(id));
+            }
+
+            SKSE::log::info("HandleProtoCommand: craft_enchantment (reqId={}, item=0x{:08X}, effects={}, gem=0x{:08X})",
+                reqId, itemFormId, effectIds.size(), soulGemFormId);
+
+            DispatchTaskWithTimeout<std::string>(
+                session,
+                /*useUITask=*/true,
+                std::chrono::milliseconds(2500),
+                [reqId, itemFormId, effectIds = std::move(effectIds), soulGemFormId, customName, magnitudeSlider]() -> std::string {
+                    if (!Util::IsGameSessionReady() || !Game::AlchemyController::IsEnchantingMenuOpen()) {
+                        return Sync::ProtoPacketBuilder::BuildCommandResult(reqId, false, 0, "BENCH_CLOSED");
+                    }
+
+                    auto res = Game::AlchemyController::CraftEnchantment(
+                        itemFormId,
+                        effectIds,
+                        soulGemFormId,
+                        customName,
+                        magnitudeSlider
+                    );
+
+                    if (res.success) {
+                        Game::InventoryEventHandler::GetSingleton()->RequestInventorySync();
+                        Game::InventoryEventHandler::GetSingleton()->RequestAlchemyStatsSync();
+                    }
+
+                    return Sync::ProtoPacketBuilder::BuildCommandResult(
+                        reqId,
+                        res.success,
+                        res.success ? 1 : 0,
+                        res.success ? "" : res.errorCode
+                    );
+                },
+                [](Session& s, std::string responseBytes) {
+                    s.SendBinary(std::move(responseBytes));
+                },
+                [reqId](Session& s) {
+                    SKSE::log::warn("HandleProtoCommand: craft_enchantment (reqId={}) timed out", reqId);
+                    s.SendBinary(Sync::ProtoPacketBuilder::BuildCommandResult(reqId, false, 0, "TIMEOUT"));
+                });
         }
     }
 

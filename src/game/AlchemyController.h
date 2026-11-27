@@ -14,6 +14,12 @@ namespace SkyPotion::Game {
         int craftedCount{ 0 };
     };
 
+    struct EnchantCraftResult {
+        bool success{ false };
+        std::string errorCode;
+        std::string message;
+    };
+
     class AlchemyController {
     public:
         // Checks if the Alchemy workbench menu is currently open
@@ -61,6 +67,15 @@ namespace SkyPotion::Game {
             const std::vector<RE::FormID>& formIds,
             bool autoCraft = false,
             int craftCount = 1
+        );
+
+        // Crafts an enchanted item using the currently open EnchantConstructMenu
+        static EnchantCraftResult CraftEnchantment(
+            RE::FormID itemFormId,
+            const std::vector<RE::FormID>& effectFormIds,
+            RE::FormID soulGemFormId,
+            const std::string& customName,
+            float magnitudeSlider
         );
     };
 

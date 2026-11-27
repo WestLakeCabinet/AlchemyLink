@@ -292,6 +292,15 @@ std::string ProtoPacketBuilder::BuildCatalogSnapshot() {
         const bool isWeapon = (ench->data.castingType != RE::MagicSystem::CastingType::kConstantEffect);
         enchDef->set_is_weapon_enchant(isWeapon);
 
+        if (ench->data.wornRestrictions) {
+            ench->data.wornRestrictions->ForEachForm([enchDef](RE::TESForm* a_form) {
+                if (a_form) {
+                    enchDef->add_compatible_slots(a_form->GetFormID());
+                }
+                return RE::BSContainer::ForEachResult::kContinue;
+            });
+        }
+
         double maxCost = 0.0;
         for (auto* eff : ench->effects) {
             if (eff && eff->baseEffect) {
@@ -378,31 +387,82 @@ std::string ProtoPacketBuilder::BuildInventoryFullSnapshot() {
         }
 
         if (boundObj->Is(RE::FormType::Armor) || boundObj->Is(RE::FormType::Weapon)) {
-            const char* eqName = (invEntry && invEntry->GetDisplayName()) ? invEntry->GetDisplayName() : boundObj->GetName();
-            auto* eqEntry = update->add_equipment();
-            eqEntry->set_form_id(boundObj->GetFormID());
-            eqEntry->set_name(eqName ? eqName : "");
-            eqEntry->set_count(data.first);
+            auto* enchForm = boundObj->As<RE::TESEnchantableForm>();
+            RE::EnchantmentItem* baseEnch = enchForm ? enchForm->formEnchanting : nullptr;
 
-            const bool isEnchanted = invEntry ? invEntry->IsEnchanted() : false;
-            eqEntry->set_is_enchanted(isEnchanted);
-            if (invEntry) {
-                if (auto* ench = invEntry->GetEnchantment()) {
-                    eqEntry->add_enchantment_ids(ench->GetFormID());
-                }
-                eqEntry->set_is_equipped(invEntry->IsWorn());
-                eqEntry->set_weight(Util::Round3(invEntry->GetWeight()));
-                eqEntry->set_value(invEntry->GetValue());
+            int32_t unenchantedCount = 0;
+            int32_t enchantedCount = 0;
+            RE::FormID firstEnchId = baseEnch ? baseEnch->GetFormID() : 0;
+            bool unenchantedWorn = false;
+            bool enchantedWorn = false;
+
+            if (baseEnch != nullptr) {
+                enchantedCount = data.first;
+                enchantedWorn = invEntry ? invEntry->IsWorn() : false;
             } else {
-                eqEntry->set_weight(Util::Round3(boundObj->GetWeight()));
-                eqEntry->set_value(boundObj->GetGoldValue());
+                int32_t remaining = data.first;
+                if (invEntry && invEntry->extraLists) {
+                    for (auto* xList : *invEntry->extraLists) {
+                        if (!xList || remaining <= 0) continue;
+                        int32_t xCount = std::max<int32_t>(1, xList->GetCount());
+                        int32_t take = std::min(remaining, xCount);
+                        remaining -= take;
+
+                        bool isWorn = xList->HasType<RE::ExtraWorn>() || xList->HasType<RE::ExtraWornLeft>();
+                        auto* xEnch = xList->GetByType<RE::ExtraEnchantment>();
+                        if (xEnch && xEnch->enchantment) {
+                            enchantedCount += take;
+                            if (firstEnchId == 0) {
+                                firstEnchId = xEnch->enchantment->GetFormID();
+                            }
+                            if (isWorn) enchantedWorn = true;
+                        } else {
+                            unenchantedCount += take;
+                            if (isWorn) unenchantedWorn = true;
+                        }
+                    }
+                }
+                if (remaining > 0) {
+                    unenchantedCount += remaining;
+                }
             }
 
-            if (auto* armor = boundObj->As<RE::TESObjectARMO>()) {
-                eqEntry->set_armor_rating(static_cast<uint32_t>(std::max(0.0f, armor->GetArmorRating())));
-            } else if (auto* weapon = boundObj->As<RE::TESObjectWEAP>()) {
-                eqEntry->set_attack_damage(static_cast<uint32_t>(weapon->GetAttackDamage()));
-            }
+            auto emitEquipment = [&](int32_t cnt, bool isEnch, RE::FormID enchId, bool isWorn, const char* customDisplayName) {
+                if (cnt <= 0) return;
+                const char* eqName = (customDisplayName && customDisplayName[0] != '\0') ? customDisplayName : boundObj->GetName();
+                auto* eqEntry = update->add_equipment();
+                eqEntry->set_form_id(boundObj->GetFormID());
+                eqEntry->set_name(eqName ? eqName : "");
+                eqEntry->set_count(cnt);
+                eqEntry->set_is_enchanted(isEnch);
+                if (enchId != 0) {
+                    eqEntry->add_enchantment_ids(enchId);
+                }
+                eqEntry->set_is_equipped(isWorn);
+                eqEntry->set_weight(Util::Round3(invEntry ? invEntry->GetWeight() : boundObj->GetWeight()));
+                eqEntry->set_value(invEntry ? invEntry->GetValue() : boundObj->GetGoldValue());
+
+                if (auto* armor = boundObj->As<RE::TESObjectARMO>()) {
+                    eqEntry->set_is_weapon(false);
+                    eqEntry->set_armor_rating(static_cast<uint32_t>(std::max(0.0f, armor->GetArmorRating())));
+                } else if (auto* weapon = boundObj->As<RE::TESObjectWEAP>()) {
+                    eqEntry->set_is_weapon(true);
+                    eqEntry->set_attack_damage(static_cast<uint32_t>(weapon->GetAttackDamage()));
+                }
+
+                if (auto* kwForm = boundObj->As<RE::BGSKeywordForm>()) {
+                    for (const auto* kw : kwForm->GetKeywords()) {
+                        if (kw) {
+                            eqEntry->add_keyword_form_ids(kw->GetFormID());
+                        }
+                    }
+                }
+            };
+
+            const char* baseName = boundObj->GetName();
+            const char* displayName = (invEntry && invEntry->GetDisplayName()) ? invEntry->GetDisplayName() : baseName;
+            emitEquipment(unenchantedCount, false, 0, unenchantedWorn, baseName);
+            emitEquipment(enchantedCount, true, firstEnchId, enchantedWorn, displayName);
         }
     }
 

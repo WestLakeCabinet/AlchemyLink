@@ -15,6 +15,7 @@ namespace SkyPotion::Game {
 
     static std::atomic<bool> s_craftCancel{ false };
     static std::atomic<bool> s_isCrafting{ false };
+    static std::atomic<bool> s_autoConfirmEnchanting{ false };
     static std::mutex s_craftMutex;
     static std::condition_variable s_craftCv;
     static std::thread s_craftThread;
@@ -871,6 +872,243 @@ namespace SkyPotion::Game {
         return result;
     }
 
+    EnchantCraftResult AlchemyController::CraftEnchantment(
+        RE::FormID itemFormId,
+        const std::vector<RE::FormID>& effectFormIds,
+        RE::FormID soulGemFormId,
+        const std::string& customName,
+        float magnitudeSlider
+    ) {
+        EnchantCraftResult result;
+        auto* menu = GetEnchantingMenu();
+        if (!menu) {
+            result.errorCode = "BENCH_CLOSED";
+            result.message = "Enchanting workbench is not open";
+            return result;
+        }
+
+        if (effectFormIds.empty()) {
+            result.errorCode = "NO_EFFECTS";
+            result.message = "No enchantment effects specified";
+            return result;
+        }
+
+        using EnchantMenu = RE::CraftingSubMenus::EnchantConstructMenu;
+        using ItemChangeEntry = EnchantMenu::ItemChangeEntry;
+        using EnchantmentEntry = EnchantMenu::EnchantmentEntry;
+        using FilterFlag = EnchantMenu::FilterFlag;
+
+        ItemChangeEntry* targetItem = nullptr;
+        ItemChangeEntry* targetGem = nullptr;
+        std::int32_t targetItemIdx = -1;
+        std::int32_t targetGemIdx = -1;
+
+        for (std::uint32_t i = 0; i < menu->listEntries.size(); ++i) {
+            auto& entryPtr = menu->listEntries[i];
+            if (!entryPtr) continue;
+            auto* itemEntry = skyrim_cast<ItemChangeEntry*>(entryPtr.get());
+            if (!itemEntry || !itemEntry->data || !itemEntry->data->object) continue;
+
+            const RE::FormID formId = itemEntry->data->object->GetFormID();
+            if (!targetItem && formId == itemFormId &&
+                itemEntry->filterFlag.any(FilterFlag::EnchantWeapon, FilterFlag::EnchantArmor)) {
+                targetItem = itemEntry;
+                targetItemIdx = static_cast<std::int32_t>(i);
+            } else if (!targetGem && formId == soulGemFormId &&
+                itemEntry->filterFlag.any(FilterFlag::SoulGem) &&
+                itemEntry->data->GetSoulLevel() > RE::SOUL_LEVEL::kNone) {
+                targetGem = itemEntry;
+                targetGemIdx = static_cast<std::int32_t>(i);
+            }
+        }
+
+        if (!targetItem) {
+            result.errorCode = "ITEM_NOT_FOUND";
+            result.message = "Target equipment not found in enchanting menu";
+            return result;
+        }
+        if (!targetGem) {
+            result.errorCode = "SOUL_GEM_NOT_FOUND";
+            result.message = "Filled soul gem not found in enchanting menu";
+            return result;
+        }
+
+        auto* ui = RE::UI::GetSingleton();
+        auto craftingMenu = (ui && ui->IsMenuOpen(RE::CraftingMenu::MENU_NAME))
+            ? ui->GetMenu<RE::CraftingMenu>(RE::CraftingMenu::MENU_NAME)
+            : nullptr;
+        auto* movie = craftingMenu ? craftingMenu->uiMovie.get() : (menu->view ? menu->view.get() : nullptr);
+
+        auto invokeDelegate = [&](const char* name, double argVal, bool withArg = true) -> bool {
+            if (craftingMenu && craftingMenu->fxDelegate) {
+                if (auto* defn = craftingMenu->fxDelegate->callbacks.Get(name)) {
+                    if (defn->callback && defn->handler) {
+                        RE::GFxValue arg(argVal);
+                        RE::FxDelegateArgs cbArgs(
+                            RE::GFxValue(),
+                            defn->handler.get(),
+                            movie,
+                            withArg ? &arg : nullptr,
+                            withArg ? 1u : 0u
+                        );
+                        defn->callback(cbArgs);
+                        return true;
+                    }
+                }
+            }
+            return false;
+        };
+
+        // Log registered FxDelegate callbacks for diagnostics
+        if (craftingMenu && craftingMenu->fxDelegate) {
+            std::string keys;
+            for (auto it = craftingMenu->fxDelegate->callbacks.begin(); it != craftingMenu->fxDelegate->callbacks.end(); ++it) {
+                if (!keys.empty()) keys += ", ";
+                keys += it->first.c_str();
+            }
+            SKSE::log::info("CraftEnchantment: Registered FxDelegate callbacks: [{}]", keys);
+        }
+
+        // Clear existing selections
+        if (menu->selected.item) {
+            menu->selected.item->selected = false;
+            menu->selected.item.reset();
+        }
+        if (menu->selected.soulGem) {
+            menu->selected.soulGem->selected = false;
+            menu->selected.soulGem.reset();
+        }
+        for (auto& effPtr : menu->selected.effects) {
+            if (effPtr) {
+                effPtr->selected = false;
+            }
+        }
+        menu->selected.effects.clear();
+
+        // Select item & soul gem via FxDelegate SetSelectedCategory + ChooseItem (updates createEffectFunctor & craftItemPreview)
+        if (targetItemIdx >= 0) {
+            invokeDelegate("SetSelectedCategory", static_cast<double>(EnchantMenu::Category::Item));
+            invokeDelegate("SetSelectedItem", static_cast<double>(targetItemIdx));
+            invokeDelegate("ChooseItem", static_cast<double>(targetItemIdx));
+        }
+        if (menu->selected.item.get() != targetItem) {
+            targetItem->selected = true;
+            menu->selected.item.reset(targetItem);
+        }
+
+        if (targetGemIdx >= 0) {
+            invokeDelegate("SetSelectedCategory", static_cast<double>(EnchantMenu::Category::SoulGem));
+            invokeDelegate("SetSelectedItem", static_cast<double>(targetGemIdx));
+            invokeDelegate("ChooseItem", static_cast<double>(targetGemIdx));
+        }
+        if (menu->selected.soulGem.get() != targetGem) {
+            targetGem->selected = true;
+            menu->selected.soulGem.reset(targetGem);
+        }
+        menu->UpdateInterface();
+
+        const bool isWeapon = targetItem->filterFlag.any(FilterFlag::EnchantWeapon);
+        const std::uint32_t maxEffects = std::max<std::uint32_t>(1, menu->selected.numEnchantmentsAllowed);
+
+        invokeDelegate("SetSelectedCategory", static_cast<double>(EnchantMenu::Category::Enchantment));
+        for (RE::FormID effId : effectFormIds) {
+            if (menu->selected.effects.size() >= maxEffects) break;
+
+            for (std::uint32_t i = 0; i < menu->listEntries.size(); ++i) {
+                auto& entryPtr = menu->listEntries[i];
+                if (!entryPtr) continue;
+                auto* enchEntry = skyrim_cast<EnchantmentEntry*>(entryPtr.get());
+                if (!enchEntry || !enchEntry->data) continue;
+                if (enchEntry->data->GetFormID() != effId) continue;
+                if (!enchEntry->enabled) continue;
+
+                invokeDelegate("SetSelectedItem", static_cast<double>(i));
+                invokeDelegate("ChooseItem", static_cast<double>(i));
+
+                bool alreadyInSelected = false;
+                for (auto& selEff : menu->selected.effects) {
+                    if (selEff.get() == enchEntry) {
+                        alreadyInSelected = true;
+                        break;
+                    }
+                }
+                if (!alreadyInSelected && menu->selected.effects.size() < maxEffects) {
+                    enchEntry->selected = true;
+                    RE::BSTSmartPointer<EnchantmentEntry> smartPtr;
+                    smartPtr.reset(enchEntry);
+                    menu->selected.effects.push_back(smartPtr);
+                }
+
+                if (isWeapon && enchEntry->maxMagnitude > 0.0f) {
+                    const float ratio = std::clamp(magnitudeSlider, 0.0f, 1.0f);
+                    enchEntry->magnitude = std::max(1.0f, ratio * enchEntry->maxMagnitude);
+                }
+                break;
+            }
+        }
+
+        if (menu->selected.effects.empty()) {
+            menu->UpdateInterface();
+            result.errorCode = "EFFECT_NOT_COMPATIBLE";
+            result.message = "Selected enchantment effect is not compatible or not found";
+            return result;
+        }
+
+        menu->UpdateInterface();
+
+        if (!customName.empty()) {
+            menu->RenameItem(customName.c_str());
+        }
+
+        SKSE::log::info("CraftEnchantment: Ready to craft (item=0x{:08X}, effects={}, gem=0x{:08X}, preview={}, cat={}, enabledFilters=0x{:X})",
+            itemFormId, menu->selected.effects.size(), soulGemFormId,
+            menu->craftItemPreview != nullptr, static_cast<int>(menu->currentCategory.get()), menu->enabledFilters.underlying());
+
+        auto* userEvents = RE::UserEvents::GetSingleton();
+        if (!userEvents) {
+            result.errorCode = "USER_EVENTS_MISSING";
+            result.message = "UserEvents singleton unavailable";
+            return result;
+        }
+
+        DismissOpenMessageBoxes();
+        s_autoConfirmEnchanting.store(true);
+
+        bool triggered = false;
+        const char* triggerMethod = "none";
+
+        if (invokeDelegate("CraftButtonPress", 0.0, false)) {
+            triggered = true;
+            triggerMethod = "FxDelegate:CraftButtonPress";
+        } else if (invokeDelegate("Craft", 0.0, false)) {
+            triggered = true;
+            triggerMethod = "FxDelegate:Craft";
+        } else if (movie && movie->Invoke("_root.Menu.onCraftButtonPress", nullptr, nullptr, 0)) {
+            triggered = true;
+            triggerMethod = "GFx:_root.Menu.onCraftButtonPress";
+        } else if (menu->ProcessUserEvent(&userEvents->xButton)) {
+            triggered = true;
+            triggerMethod = "ProcessUserEvent:xButton";
+        }
+
+        const bool hasMsgBoxNow = (RE::MessageBoxMenu::GetCurrentMessageBoxData() != nullptr);
+        DismissOpenMessageBoxes();
+
+        SKSE::log::info("CraftEnchantment: Craft triggered={} via {} (hasMsgBoxNow={}, item=0x{:08X}, effects={}, gem=0x{:08X})",
+            triggered, triggerMethod, hasMsgBoxNow, itemFormId, menu->selected.effects.size(), soulGemFormId);
+
+        if (!triggered) {
+            s_autoConfirmEnchanting.store(false);
+            result.errorCode = "CRAFT_TRIGGER_FAILED";
+            result.message = "Failed to trigger enchanting craft";
+            return result;
+        }
+
+        result.success = true;
+        result.message = "Enchanted item";
+        return result;
+    }
+
     MenuOpenCloseHandler* MenuOpenCloseHandler::GetSingleton() {
         static MenuOpenCloseHandler instance;
         return &instance;
@@ -1140,6 +1378,9 @@ namespace SkyPotion::Game {
                 taskInterface->AddTask([]() {
                     if (AlchemyController::IsAlchemyMenuOpen()) {
                         SKSE::log::info("MenuOpenCloseEvent: MessageBoxMenu opened at alchemy workbench. Auto-dismissing.");
+                        AlchemyController::DismissOpenMessageBoxes();
+                    } else if (AlchemyController::IsEnchantingMenuOpen() && s_autoConfirmEnchanting.exchange(false)) {
+                        SKSE::log::info("MenuOpenCloseEvent: MessageBoxMenu opened for remote enchanting. Auto-confirming.");
                         AlchemyController::DismissOpenMessageBoxes();
                     }
                 });
