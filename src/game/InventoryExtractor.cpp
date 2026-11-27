@@ -105,7 +105,10 @@ RE::BSEventNotifyControl InventoryEventHandler::ProcessEvent(
     }
 
     auto* form = RE::TESForm::LookupByID(a_event->baseObj);
-    if (form && form->Is(RE::FormType::Ingredient)) {
+    if (form && (form->Is(RE::FormType::Ingredient) ||
+                 form->Is(RE::FormType::SoulGem) ||
+                 form->Is(RE::FormType::Armor) ||
+                 form->Is(RE::FormType::Weapon))) {
         RequestInventorySync();
     }
 
@@ -134,8 +137,11 @@ RE::BSEventNotifyControl InventoryEventHandler::ProcessEvent(
     }
 
     auto* form = RE::TESForm::LookupByID(a_event->baseObject);
-    if (form && form->Is(RE::FormType::Armor)) {
-        RequestAlchemyStatsSync();
+    if (form && (form->Is(RE::FormType::Armor) || form->Is(RE::FormType::Weapon))) {
+        if (form->Is(RE::FormType::Armor)) {
+            RequestAlchemyStatsSync();
+        }
+        RequestInventorySync();
     }
 
     return RE::BSEventNotifyControl::kContinue;

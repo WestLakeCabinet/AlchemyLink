@@ -264,6 +264,43 @@ std::string ProtoPacketBuilder::BuildCatalogSnapshot() {
         effDef->set_keywords(joinedKeywords);
     }
 
+    // 3. 플레이어가 습득한 인챈트(ENCH, kKnown) 수집
+    const auto& allEnchantments = dataHandler->GetFormArray<RE::EnchantmentItem>();
+    for (auto* ench : allEnchantments) {
+        if (!ench || ench->IsDeleted()) continue;
+        if ((ench->GetFormFlags() & RE::TESForm::RecordFlags::kKnown) == 0) continue;
+        if (ench->data.spellType != RE::MagicSystem::SpellType::kEnchantment) continue;
+
+        const char* name = ench->GetName();
+        if (!name || name[0] == '\0') continue;
+
+        auto* enchDef = snapshot->add_known_enchantments();
+        enchDef->set_form_id(ench->GetFormID());
+        enchDef->set_name(name);
+
+        std::string desc;
+        for (auto* eff : ench->effects) {
+            if (eff && eff->baseEffect && !eff->baseEffect->magicItemDescription.empty()) {
+                desc = eff->baseEffect->magicItemDescription.c_str();
+                break;
+            }
+        }
+        if (!desc.empty()) {
+            enchDef->set_description(desc);
+        }
+
+        const bool isWeapon = (ench->data.castingType != RE::MagicSystem::CastingType::kConstantEffect);
+        enchDef->set_is_weapon_enchant(isWeapon);
+
+        double maxCost = 0.0;
+        for (auto* eff : ench->effects) {
+            if (eff && eff->baseEffect) {
+                maxCost = std::max(maxCost, static_cast<double>(eff->baseEffect->data.baseCost));
+            }
+        }
+        enchDef->set_base_cost(Util::Round4(maxCost));
+    }
+
     return packet.SerializeAsString();
 }
 
@@ -280,14 +317,93 @@ std::string ProtoPacketBuilder::BuildInventoryFullSnapshot() {
     update->set_is_full_snapshot(true);
 
     const auto inventory = player->GetInventory([](RE::TESBoundObject& a_obj) {
-        return a_obj.Is(RE::FormType::Ingredient);
+        return a_obj.Is(RE::FormType::Ingredient) ||
+               a_obj.Is(RE::FormType::SoulGem) ||
+               a_obj.Is(RE::FormType::Armor) ||
+               a_obj.Is(RE::FormType::Weapon);
     });
 
     for (const auto& [boundObj, data] : inventory) {
         if (!boundObj || data.first <= 0) continue;
-        auto* entry = update->add_items();
-        entry->set_form_id(boundObj->GetFormID());
-        entry->set_count(data.first);
+
+        if (boundObj->Is(RE::FormType::Ingredient)) {
+            auto* entry = update->add_items();
+            entry->set_form_id(boundObj->GetFormID());
+            entry->set_count(data.first);
+            continue;
+        }
+
+        auto* invEntry = data.second.get();
+
+        if (boundObj->Is(RE::FormType::SoulGem)) {
+            auto* soulGem = boundObj->As<RE::TESSoulGem>();
+            if (!soulGem) continue;
+
+            const char* gemName = (invEntry && invEntry->GetDisplayName()) ? invEntry->GetDisplayName() : soulGem->GetName();
+            const int32_t capacityLevel = static_cast<int32_t>(soulGem->GetMaximumCapacity());
+            const RE::SOUL_LEVEL defaultSoul = soulGem->GetContainedSoul();
+
+            std::map<int32_t, int32_t> countsBySoul;
+            int32_t remaining = data.first;
+
+            if (invEntry && invEntry->extraLists) {
+                for (auto* xList : *invEntry->extraLists) {
+                    if (!xList) continue;
+                    int32_t xCount = std::max<int32_t>(1, xList->GetCount());
+                    RE::SOUL_LEVEL xSoul = xList->GetSoulLevel();
+                    if (xSoul == RE::SOUL_LEVEL::kNone) {
+                        xSoul = defaultSoul;
+                    }
+                    int32_t take = std::min(remaining, xCount);
+                    if (take > 0) {
+                        countsBySoul[static_cast<int32_t>(xSoul)] += take;
+                        remaining -= take;
+                    }
+                }
+            }
+            if (remaining > 0) {
+                countsBySoul[static_cast<int32_t>(defaultSoul)] += remaining;
+            }
+
+            for (const auto& [soulLvl, cnt] : countsBySoul) {
+                if (cnt <= 0) continue;
+                auto* gemEntry = update->add_soul_gems();
+                gemEntry->set_form_id(boundObj->GetFormID());
+                gemEntry->set_name(gemName ? gemName : "");
+                gemEntry->set_capacity_level(capacityLevel);
+                gemEntry->set_contained_soul_level(soulLvl);
+                gemEntry->set_count(cnt);
+            }
+            continue;
+        }
+
+        if (boundObj->Is(RE::FormType::Armor) || boundObj->Is(RE::FormType::Weapon)) {
+            const char* eqName = (invEntry && invEntry->GetDisplayName()) ? invEntry->GetDisplayName() : boundObj->GetName();
+            auto* eqEntry = update->add_equipment();
+            eqEntry->set_form_id(boundObj->GetFormID());
+            eqEntry->set_name(eqName ? eqName : "");
+            eqEntry->set_count(data.first);
+
+            const bool isEnchanted = invEntry ? invEntry->IsEnchanted() : false;
+            eqEntry->set_is_enchanted(isEnchanted);
+            if (invEntry) {
+                if (auto* ench = invEntry->GetEnchantment()) {
+                    eqEntry->add_enchantment_ids(ench->GetFormID());
+                }
+                eqEntry->set_is_equipped(invEntry->IsWorn());
+                eqEntry->set_weight(Util::Round3(invEntry->GetWeight()));
+                eqEntry->set_value(invEntry->GetValue());
+            } else {
+                eqEntry->set_weight(Util::Round3(boundObj->GetWeight()));
+                eqEntry->set_value(boundObj->GetGoldValue());
+            }
+
+            if (auto* armor = boundObj->As<RE::TESObjectARMO>()) {
+                eqEntry->set_armor_rating(static_cast<uint32_t>(std::max(0.0f, armor->GetArmorRating())));
+            } else if (auto* weapon = boundObj->As<RE::TESObjectWEAP>()) {
+                eqEntry->set_attack_damage(static_cast<uint32_t>(weapon->GetAttackDamage()));
+            }
+        }
     }
 
     return packet.SerializeAsString();
