@@ -90,3 +90,9 @@ BindAddress = 0.0.0.0
 | :--- | :---: | :--- |
 | `Port` | `47778` | WebSocket server port (`1`–`65535`). |
 | `BindAddress` | `0.0.0.0` | Network interface to bind (`0.0.0.0` for LAN/mobile access, `127.0.0.1` for local-only). |
+
+---
+
+## 📄 License
+
+This project is licensed under the [MIT License](LICENSE).
