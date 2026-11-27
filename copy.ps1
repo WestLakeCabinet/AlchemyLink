@@ -1,1 +1,1 @@
-copy .\build\Release\SkyPotionSKSE.dll 'D:\Steam\steamapps\common\Skyrim Special Edition\Data\SKSE\Plugins\'
+copy .\build\Release\AlchemyLink.dll 'D:\Steam\steamapps\common\Skyrim Special Edition\Data\SKSE\Plugins\'

@@ -23,7 +23,12 @@ public:
     // 4. 발견된 효과 마스크 업데이트
     static std::string BuildDiscoveredEffects(const std::vector<RE::FormID>& formIds);
 
-    // 5. 연금술대 열림/닫힘 및 선택 재료 상태
+    // 5. 작업대(연금술대/마법부여대 등) 열림/닫힘 및 선택 상태
+    static std::string BuildCraftingBenchState(
+        pb::BenchType benchType,
+        bool isOpen,
+        const std::vector<RE::FormID>& selectedFormIds = {}
+    );
     static std::string BuildAlchemyBenchState(bool isOpen, const std::vector<RE::FormID>& selectedFormIds);
 
     // 6. 앱 명령 실행 결과 응답

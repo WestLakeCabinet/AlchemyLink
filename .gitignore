@@ -14,3 +14,5 @@ out/
 vcpkg_installed/
 project_all.md
 /what_source
+*.zip
+/SKSE

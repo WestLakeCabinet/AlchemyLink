@@ -8,7 +8,7 @@
 namespace SkyPotion {
     void Config::Load() {
         const std::filesystem::path iniDir = "Data/SKSE/Plugins";
-        const std::filesystem::path iniPath = iniDir / "SkyPotionSKSE.ini";
+        const std::filesystem::path iniPath = iniDir / "AlchemyLink.ini";
 
         std::error_code ec;
         if (!std::filesystem::exists(iniDir, ec)) {

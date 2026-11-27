@@ -25,9 +25,15 @@ $needConfigure = $Reconfigure -or (-not (Test-Path $cacheFile))
 
 if (Test-Path $cacheFile) {
     $cacheContent = Get-Content $cacheFile -Raw
-    if ($cacheContent -match "x64-windows-static[\\/]") {
-        Write-Host "Detected stale triplet cache in CMakeCache.txt. Refreshing cache..." -ForegroundColor Yellow
+    $normalizedRoot = $projectRoot -replace '\\', '/'
+    $staleSource = ($cacheContent -match 'CMAKE_HOME_DIRECTORY:INTERNAL=(.+)') -and ($Matches[1].Trim() -ne $normalizedRoot)
+    if ($Reconfigure -or $staleSource -or ($cacheContent -match "x64-windows-static[\\/]")) {
+        Write-Host "Detected stale CMakeCache.txt. Refreshing cache..." -ForegroundColor Yellow
         Remove-Item $cacheFile -Force
+        $depsDir = Join-Path $projectRoot "build\_deps"
+        if (Test-Path $depsDir) {
+            Get-ChildItem $depsDir -Directory -Filter "*-subbuild" | Remove-Item -Recurse -Force
+        }
         $needConfigure = $true
     }
 }
@@ -42,10 +48,10 @@ if ($needConfigure) {
     Write-Host "`n[1/2] Skipping CMake Configure (already configured. Use -Reconfigure if needed)" -ForegroundColor DarkGray
 }
 
-Write-Host "`n[2/2] Building SkyPotionSKSE.dll (Release)..." -ForegroundColor Yellow
+Write-Host "`n[2/2] Building AlchemyLink.dll (Release)..." -ForegroundColor Yellow
 & $cmakeExe --build build --config Release --target SkyPotionSKSE --parallel
 
-$dllPath = Join-Path $projectRoot "build\Release\SkyPotionSKSE.dll"
+$dllPath = Join-Path $projectRoot "build\Release\AlchemyLink.dll"
 if (Test-Path $dllPath) {
     Write-Host "`n=============================================" -ForegroundColor Green
     Write-Host " BUILD SUCCESS!" -ForegroundColor Green
@@ -55,7 +61,7 @@ if (Test-Path $dllPath) {
         if (-not (Test-Path $skyrimPluginDir)) {
             New-Item -ItemType Directory -Path $skyrimPluginDir -Force | Out-Null
         }
-        $destPath = Join-Path $skyrimPluginDir "SkyPotionSKSE.dll"
+        $destPath = Join-Path $skyrimPluginDir "AlchemyLink.dll"
         try {
             Copy-Item -Path $dllPath -Destination $destPath -Force
             Write-Host " Deployed to: $destPath" -ForegroundColor Cyan

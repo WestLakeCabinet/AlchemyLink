@@ -40,8 +40,8 @@ jobs:
         run: |
           cmake --build build --config Release --target SkyPotionSKSE --parallel
 
-      - name: Upload SkyPotionSKSE.dll Artifact
+      - name: Upload AlchemyLink.dll Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: SkyPotionSKSE-Release
-          path: build/Release/SkyPotionSKSE.dll
+          name: AlchemyLink-Release
+          path: build/Release/AlchemyLink.dll

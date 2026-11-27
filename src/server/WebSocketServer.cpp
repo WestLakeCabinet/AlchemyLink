@@ -631,18 +631,24 @@ namespace SkyPotion::Server {
                     BroadcastBinary(invBin);
                 }
 
-                // 4) ?꾩옱 ?곌툑?좊? ?대┝ ?곹깭 諛??좏깮 ?щ즺 ?꾩넚 (BenchState, Tag 15)
-                bool isOpen = Game::AlchemyController::IsAlchemyItemListReady();
-                std::vector<RE::FormID> selected = isOpen
+                // 4) 현재 작업대(연금술대/마법부여대) 열림 상태 및 선택 재료 전송 (BenchState, Tag 15)
+                bool isAlchemyOpen = Game::AlchemyController::IsAlchemyItemListReady();
+                bool isEnchantingOpen = !isAlchemyOpen && Game::AlchemyController::IsEnchantingMenuOpen();
+                std::vector<RE::FormID> selected = isAlchemyOpen
                     ? Game::AlchemyController::GetSelectedIngredientFormIDs()
                     : std::vector<RE::FormID>{};
 
-                if (isOpen) {
+                if (isAlchemyOpen || isEnchantingOpen) {
                     Game::MenuOpenCloseHandler::StartMonitoring();
                 }
 
-                BroadcastBinary(Sync::ProtoPacketBuilder::BuildAlchemyBenchState(isOpen, selected));
-                SKSE::log::info("BroadcastProtoSnapshot: sent CatalogSnapshot, PlayerStats, InventorySnapshot, BenchState (isOpen={})", isOpen);
+                if (isEnchantingOpen) {
+                    BroadcastBinary(Sync::ProtoPacketBuilder::BuildCraftingBenchState(Sync::pb::BENCH_ENCHANTING, true));
+                } else {
+                    BroadcastBinary(Sync::ProtoPacketBuilder::BuildAlchemyBenchState(isAlchemyOpen, selected));
+                }
+                SKSE::log::info("BroadcastProtoSnapshot: sent CatalogSnapshot, PlayerStats, InventorySnapshot, BenchState (alchemy={}, enchanting={})",
+                    isAlchemyOpen, isEnchantingOpen);
             } catch (const std::exception& e) {
                 SKSE::log::error("Error in BroadcastProtoSnapshot: {}", e.what());
             }

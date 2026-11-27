@@ -25,7 +25,7 @@ namespace {
             return;
         }
 
-        *path /= "SkyPotionSKSE.log";
+        *path /= "AlchemyLink.log";
         auto sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(path->string(), true);
         auto log = std::make_shared<spdlog::logger>("global log", std::move(sink));
 

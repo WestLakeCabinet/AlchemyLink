@@ -25,6 +25,12 @@ namespace SkyPotion::Game {
         // Retrieves the active AlchemyMenu pointer, or nullptr if not open
         static RE::CraftingSubMenus::AlchemyMenu* GetAlchemyMenu();
 
+        // Checks if the Enchanting workbench menu is currently open
+        static bool IsEnchantingMenuOpen();
+
+        // Retrieves the active EnchantConstructMenu pointer, or nullptr if not open
+        static RE::CraftingSubMenus::EnchantConstructMenu* GetEnchantingMenu();
+
         // Clears any currently selected ingredients from the alchemy slots
         static bool ClearSelectedIngredients();
 

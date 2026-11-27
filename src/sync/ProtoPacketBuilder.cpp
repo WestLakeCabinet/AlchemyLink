@@ -320,17 +320,30 @@ std::string ProtoPacketBuilder::BuildDiscoveredEffects(const std::vector<RE::For
     return packet.SerializeAsString();
 }
 
-std::string ProtoPacketBuilder::BuildAlchemyBenchState(bool isOpen, const std::vector<RE::FormID>& selectedFormIds) {
+std::string ProtoPacketBuilder::BuildCraftingBenchState(
+    pb::BenchType benchType,
+    bool isOpen,
+    const std::vector<RE::FormID>& selectedFormIds
+) {
     pb::GameSyncPacket packet;
     packet.set_protocol_version(kProtocolVersion);
     packet.set_timestamp_ms(NowMs());
 
     auto* bench = packet.mutable_bench_state();
+    bench->set_bench_type(benchType);
     bench->set_is_open(isOpen);
     for (RE::FormID id : selectedFormIds) {
         bench->add_selected_form_ids(id);
     }
     return packet.SerializeAsString();
+}
+
+std::string ProtoPacketBuilder::BuildAlchemyBenchState(bool isOpen, const std::vector<RE::FormID>& selectedFormIds) {
+    return BuildCraftingBenchState(
+        isOpen ? pb::BENCH_ALCHEMY : pb::BENCH_NONE,
+        isOpen,
+        selectedFormIds
+    );
 }
 
 std::string ProtoPacketBuilder::BuildCommandResult(

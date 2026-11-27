@@ -2,7 +2,7 @@ add_rules("mode.debug", "mode.release")
 
 set_languages("cxx23")
 
-add_requires("commonlibsse-ng", "nlohmann_json", "boost")
+add_requires("commonlibsse-ng", "boost")
 
 target("SkyPotionSKSE")
     set_kind("shared")
@@ -14,5 +14,5 @@ target("SkyPotionSKSE")
     add_files("src/**.cpp")
     add_headerfiles("src/**.h")
     add_includedirs("src")
-    add_packages("commonlibsse-ng", "nlohmann_json", "boost")
+    add_packages("commonlibsse-ng", "boost")
     add_syslinks("ws2_32")

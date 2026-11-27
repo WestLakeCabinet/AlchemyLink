@@ -25,8 +25,6 @@ add_compile_definitions(
 )
 
 find_package(protobuf CONFIG REQUIRED)
-
-find_package(nlohmann_json CONFIG REQUIRED)
 find_package(boost_beast CONFIG REQUIRED)
 find_package(boost_asio CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
@@ -84,12 +82,12 @@ add_library(
 
 # Enable Precompiled Headers for ultra-fast compilation & type consistency
 target_precompile_headers(${PROJECT_NAME} PRIVATE src/Pch.h)
+set_target_properties(${PROJECT_NAME} PROPERTIES OUTPUT_NAME "AlchemyLink")
 
 target_link_libraries(
     ${PROJECT_NAME} PRIVATE
     CommonLibSSE::CommonLibSSE
     skypotion_proto
-    nlohmann_json::nlohmann_json
     Boost::beast
     Boost::asio
     spdlog::spdlog

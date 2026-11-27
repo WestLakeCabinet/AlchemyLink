@@ -27,6 +27,7 @@
 #include <RE/Skyrim.h>
 #include <RE/A/AlchemyMenu.h>
 #include <RE/C/CraftingMenu.h>
+#include <RE/E/EnchantConstructMenu.h>
 #include <RE/U/UserEvents.h>
 #include <RE/U/UI.h>
 #include <RE/RTTI.h>

@@ -19,31 +19,46 @@ namespace SkyPotion::Game {
     static std::condition_variable s_craftCv;
     static std::thread s_craftThread;
 
+    namespace {
+        template <typename T>
+        T* GetActiveCraftingSubMenu() {
+            if (!Util::IsGameSessionReady()) {
+                return nullptr;
+            }
+
+            auto* ui = RE::UI::GetSingleton();
+            if (!ui || !ui->IsMenuOpen(RE::CraftingMenu::MENU_NAME)) {
+                return nullptr;
+            }
+
+            auto craftingMenu = ui->GetMenu<RE::CraftingMenu>(RE::CraftingMenu::MENU_NAME);
+            if (!craftingMenu) {
+                return nullptr;
+            }
+
+            auto* subMenu = craftingMenu->GetCraftingSubMenu();
+            if (!subMenu) {
+                return nullptr;
+            }
+
+            return skyrim_cast<T*>(subMenu);
+        }
+    }
+
     RE::CraftingSubMenus::AlchemyMenu* AlchemyController::GetAlchemyMenu() {
-        if (!Util::IsGameSessionReady()) {
-            return nullptr;
-        }
-
-        auto* ui = RE::UI::GetSingleton();
-        if (!ui || !ui->IsMenuOpen(RE::CraftingMenu::MENU_NAME)) {
-            return nullptr;
-        }
-
-        auto craftingMenu = ui->GetMenu<RE::CraftingMenu>(RE::CraftingMenu::MENU_NAME);
-        if (!craftingMenu) {
-            return nullptr;
-        }
-
-        auto* subMenu = craftingMenu->GetCraftingSubMenu();
-        if (!subMenu) {
-            return nullptr;
-        }
-
-        return skyrim_cast<RE::CraftingSubMenus::AlchemyMenu*>(subMenu);
+        return GetActiveCraftingSubMenu<RE::CraftingSubMenus::AlchemyMenu>();
     }
 
     bool AlchemyController::IsAlchemyMenuOpen() {
         return GetAlchemyMenu() != nullptr;
+    }
+
+    RE::CraftingSubMenus::EnchantConstructMenu* AlchemyController::GetEnchantingMenu() {
+        return GetActiveCraftingSubMenu<RE::CraftingSubMenus::EnchantConstructMenu>();
+    }
+
+    bool AlchemyController::IsEnchantingMenuOpen() {
+        return GetEnchantingMenu() != nullptr;
     }
 
     bool AlchemyController::IsCrafting() {
@@ -873,6 +888,7 @@ namespace SkyPotion::Game {
         std::atomic<bool> active{ true };
         int checkCount{ 0 };
         bool wasListReady{ false };
+        bool wasEnchantingOpen{ false };
         std::vector<RE::FormID> lastSelected;
     };
 
@@ -961,8 +977,32 @@ namespace SkyPotion::Game {
 
                         auto* alchemyMenu = AlchemyController::GetAlchemyMenu();
                         if (!alchemyMenu) {
+                            auto* enchantMenu = AlchemyController::GetEnchantingMenu();
+                            if (enchantMenu) {
+                                if (!session->wasEnchantingOpen) {
+                                    session->wasEnchantingOpen = true;
+                                    SKSE::log::info("CraftingMenu: EnchantConstructMenu OPENED! (check={})",
+                                        session->checkCount);
+
+                                    Server::WebSocketServer::GetSingleton().BroadcastBinary(
+                                        Sync::ProtoPacketBuilder::BuildCraftingBenchState(Sync::pb::BENCH_ENCHANTING, true)
+                                    );
+                                }
+                                finish(true);
+                                return;
+                            }
+
+                            if (session->wasEnchantingOpen) {
+                                session->wasEnchantingOpen = false;
+                                SKSE::log::info("CraftingMenu: EnchantConstructMenu CLOSED.");
+
+                                Server::WebSocketServer::GetSingleton().BroadcastBinary(
+                                    Sync::ProtoPacketBuilder::BuildCraftingBenchState(Sync::pb::BENCH_NONE, false)
+                                );
+                            }
+
                             if (session->checkCount >= 10) {
-                                SKSE::log::info("CraftingMenu: Active submenu is not AlchemyMenu. Stopping monitor.");
+                                SKSE::log::info("CraftingMenu: Active submenu is neither AlchemyMenu nor EnchantConstructMenu. Stopping monitor.");
                                 finish(false);
                             } else {
                                 finish(true);
